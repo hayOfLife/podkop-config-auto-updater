@@ -28,6 +28,7 @@ jobs:
             format: apk
     steps:
       - uses: actions/checkout@v7
+      - run: mkdir -p .build/sdk-output
       - name: Build native OpenWrt package
         uses: openwrt/gh-action-sdk@7fc2640243284ecc44f4a9c3f749a61746ee02cb
         env:

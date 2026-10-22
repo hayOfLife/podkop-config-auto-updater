@@ -1,7 +1,7 @@
 const fields = ['urltest_proxy_links', 'user_domains', 'user_subnets'];
 
 export function normalize(kind, value) {
-	if (type(value) != 'string' || !length(value) || length(value) > 8192 || match(value, /[\x00-\x20\x7f]/))
+	if (type(value) != 'string' || !length(value) || length(value) > 8192 || match(value, /[[:space:][:cntrl:]]/))
 		die('invalid_value');
 
 	if (kind == 'urltest_proxy_links') {

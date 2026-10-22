@@ -1,5 +1,5 @@
 export function sourceRequest(url, token) {
-	if (type(url) != 'string' || length(url) > 2048 || match(url, /[\x00-\x20\x7f]/)) die('invalid_source');
+	if (type(url) != 'string' || length(url) > 2048 || match(url, /[[:space:][:cntrl:]]/)) die('invalid_source');
 	let github = match(url, /^https:\/\/github\.com\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_.-]+)\/blob\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_./-]+)$/);
 	if (github)
 		url = 'https://api.github.com/repos/' + github[1] + '/' + github[2] + '/contents/' + github[4] + '?ref=' + github[3];
