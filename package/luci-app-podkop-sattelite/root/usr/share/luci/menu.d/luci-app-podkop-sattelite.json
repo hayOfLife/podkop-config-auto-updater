@@ -1,8 +1,0 @@
-{
-  "admin/services/podkop_sattelite": {
-    "title": "podkop sattelite",
-    "order": 61,
-    "action": {"type": "view", "path": "podkop_sattelite/main"},
-    "depends": {"acl": ["luci-app-podkop-sattelite"], "uci": {"podkop_sattelite": true}}
-  }
-}

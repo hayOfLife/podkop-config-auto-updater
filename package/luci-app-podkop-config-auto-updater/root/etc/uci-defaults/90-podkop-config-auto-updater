@@ -1,0 +1,11 @@
+#!/bin/sh
+umask 077
+[ -e /etc/config/podkop_config_auto_updater ] || cp /usr/share/podkop-config-auto-updater/defaults /etc/config/podkop_config_auto_updater
+chmod 600 /etc/config/podkop_config_auto_updater
+mkdir -p /etc/podkop-config-auto-updater
+chmod 700 /etc/podkop-config-auto-updater
+rm -f /tmp/luci-indexcache
+rm -rf /tmp/luci-modulecache
+/etc/init.d/podkop_config_auto_updater enable
+/etc/init.d/podkop_config_auto_updater restart
+exit 0

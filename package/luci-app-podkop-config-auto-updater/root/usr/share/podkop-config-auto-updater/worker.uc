@@ -4,11 +4,11 @@ import * as core from 'core';
 import { sourceRequest } from 'source';
 import { applyPatch, atomicWrite, writePrivate } from 'transaction';
 
-const statePath = '/etc/podkop-sattelite/schedule.json';
-const statusPath = '/tmp/podkop-sattelite/status.json';
-const helper = '/usr/libexec/podkop-sattelite/io';
+const statePath = '/etc/podkop-config-auto-updater/schedule.json';
+const statusPath = '/tmp/podkop-config-auto-updater/status.json';
+const helper = '/usr/libexec/podkop-config-auto-updater/io';
 const work = ARGV[1];
-let config = cursor().get_all('podkop_sattelite', 'main') || {};
+let config = cursor().get_all('podkop_config_auto_updater', 'main') || {};
 let schedule;
 try { schedule = json(fs.readfile(statePath)); } catch (e) { schedule = null; }
 
@@ -59,7 +59,7 @@ function update() {
 	if (!podkop.load('podkop')) die('invalid_podkop');
 	let section = podkop.get_all('podkop', 'main') || {};
 	let merged = core.mergeSection(section, feed, config.allow_deletes == '1');
-	let changed = applyPatch({ work, config: '/etc/config/podkop', backup: '/etc/podkop-sattelite/previous-podkop' },
+	let changed = applyPatch({ work, config: '/etc/config/podkop', backup: '/etc/podkop-config-auto-updater/previous-podkop' },
 		merged.patch, original, pending, () => system([helper, 'restart'], 180000) == 0);
 	status({ state: changed ? 'applied' : 'unchanged', revision: feed.revision, counts: merged.counts });
 }

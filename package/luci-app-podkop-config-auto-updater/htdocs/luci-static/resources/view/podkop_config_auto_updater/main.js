@@ -5,7 +5,7 @@
 'require ui';
 'require poll';
 
-var runner = '/usr/libexec/podkop-sattelite/run';
+var runner = '/usr/libexec/podkop-config-auto-updater/run';
 var errors = {
 	missing_token: 'Укажите токен GitHub с правом чтения содержимого репозитория.',
 	invalid_source: 'Проверьте HTTPS-ссылку на файл конфигурации.',
@@ -54,7 +54,7 @@ function statusText(status) {
 return view.extend({
 	load: function() { return readStatus(); },
 	render: function(status) {
-		var map = new form.Map('podkop_sattelite', 'podkop sattelite',
+		var map = new form.Map('podkop_config_auto_updater', 'Podkop config auto updater',
 			'Добавляет серверы URLTest, пользовательские домены и подсети в секцию main программы Podkop.');
 		var section = map.section(form.NamedSection, 'main', 'settings');
 		section.addremove = false;
@@ -85,7 +85,7 @@ return view.extend({
 		option.description = E('span', {}, [
 			'Для закрытого репозитория нужен токен с правом Contents: Read-only. ',
 			E('a', {
-				href: 'https://github.com/hayOfLife/podkop-sattelite/blob/main/docs/github-setup.ru.md',
+				href: 'https://github.com/hayOfLife/podkop-config-auto-updater/blob/main/docs/github-setup.ru.md',
 				target: '_blank', rel: 'noopener noreferrer'
 			}, 'Как создать закрытый репозиторий и получить токен')
 		]);

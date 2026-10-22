@@ -37,18 +37,18 @@ jobs:
           FEEDNAME: sattelite
           FEED_DIR: ${{ github.workspace }}/package
           ARTIFACTS_DIR: ${{ github.workspace }}/.build/sdk-output
-          PACKAGES: luci-app-podkop-sattelite
+          PACKAGES: luci-app-podkop-config-auto-updater
           NO_SHFMT_CHECK: 1
           V: s
       - name: Collect package
         run: |
           mkdir -p dist
-          find .build/sdk-output -type f -name 'luci-app-podkop-sattelite*.${{ matrix.format }}' -exec cp '{}' dist/ \;
+          find .build/sdk-output -type f -name 'luci-app-podkop-config-auto-updater*.${{ matrix.format }}' -exec cp '{}' dist/ \;
           test "$(find dist -type f | wc -l)" -eq 1
           cd dist
           sha256sum * > SHA256SUMS
       - uses: actions/upload-artifact@v7
         with:
-          name: podkop-sattelite-${{ matrix.format }}
+          name: podkop-config-auto-updater-${{ matrix.format }}
           path: dist/*
           if-no-files-found: error

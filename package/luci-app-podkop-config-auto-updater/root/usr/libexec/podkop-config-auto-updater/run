@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+umask 077
+case "${1:-}" in
+	status)
+		ucode -e 'import { readfile } from "fs"; import { cursor } from "uci"; let s = {}; let p = {}; try { s = json(readfile("/tmp/podkop-config-auto-updater/status.json")) || {}; p = json(readfile("/etc/podkop-config-auto-updater/schedule.json")) || {}; } catch(e) {} s.enabled = cursor().get("podkop_config_auto_updater", "main", "enabled") == "1"; s.next_run = p.next; print(sprintf("%J\n", s));'
+		exit 0 ;;
+	daemon)
+		while :; do "$0" tick >/dev/null 2>&1 || true; sleep 30; done ;;
+	update|tick) ;;
+	*) exit 2 ;;
+esac
+mkdir -p /tmp/podkop-config-auto-updater /etc/podkop-config-auto-updater
+chmod 700 /tmp/podkop-config-auto-updater /etc/podkop-config-auto-updater
+exec 9>/tmp/podkop-config-auto-updater/lock
+flock -n 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
+work="$(mktemp -d /tmp/podkop-config-auto-updater/run.XXXXXX)"
+trap 'rm -rf -- "$work"' EXIT HUP INT TERM
+mkdir "$work/delta"
+ucode -L /usr/share/podkop-config-auto-updater /usr/share/podkop-config-auto-updater/worker.uc "$1" "$work"

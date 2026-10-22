@@ -1,0 +1,8 @@
+{
+  "admin/services/podkop_config_auto_updater": {
+    "title": "Podkop config auto updater",
+    "order": 61,
+    "action": {"type": "view", "path": "podkop_config_auto_updater/main"},
+    "depends": {"acl": ["luci-app-podkop-config-auto-updater"], "uci": {"podkop_config_auto_updater": true}}
+  }
+}

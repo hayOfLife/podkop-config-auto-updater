@@ -4,13 +4,13 @@
 
 ## Установка и обновление
 
-Скачайте артефакт успешной сборки из [GitHub Actions](https://github.com/hayOfLife/podkop-sattelite/actions), распакуйте ZIP на компьютере и загрузите пакет на роутер в `/tmp`. Используйте IPK только на OpenWrt 24.10, APK только на 25.12. Имя файла ниже соответствует версии 0.1.0, release 1; сверяйте его с артефактом сборки.
+Скачайте артефакт успешной сборки из [GitHub Actions](https://github.com/hayOfLife/podkop-config-auto-updater/actions), распакуйте ZIP на компьютере и загрузите пакет на роутер в `/tmp`. Используйте IPK только на OpenWrt 24.10, APK только на 25.12. Имя файла ниже соответствует версии 0.1.0, release 1; сверяйте его с артефактом сборки.
 
 Для OpenWrt 24.10:
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-podkop-sattelite_0.1.0-r1_all.ipk
+opkg install /tmp/luci-app-podkop-config-auto-updater_0.1.0-r1_all.ipk
 ```
 
 Для OpenWrt 25.12 используйте фактическое имя APK из артефакта вместо `PACKAGE.apk`:
@@ -20,9 +20,9 @@ apk update
 apk add --allow-untrusted /tmp/PACKAGE.apk
 ```
 
-Ожидается код `0` и установленный `luci-app-podkop-sattelite`. `--allow-untrusted` требуется для локального пакета без доверенного ключа подписи; не отключайте проверку TLS. Зависимости устанавливаются из настроенных репозиториев OpenWrt. Эти команды меняют состав пакетов, но не обновляют всё окружение. Для обновления повторите установку с новым файлом: настройки загрузчика сохраняются.
+Ожидается код `0` и установленный `luci-app-podkop-config-auto-updater`. `--allow-untrusted` требуется для локального пакета без доверенного ключа подписи; не отключайте проверку TLS. Зависимости устанавливаются из настроенных репозиториев OpenWrt. Эти команды меняют состав пакетов, но не обновляют всё окружение. Для обновления повторите установку с новым файлом: настройки загрузчика сохраняются.
 
-Откройте **Службы → podkop sattelite**, заполните [ссылку и токен](github-setup.ru.md), сохраните и примените. Затем нажмите **Обновить сейчас**. Не вставляйте токен в командную строку или адрес файла.
+Откройте **Службы → Podkop config auto updater**, заполните [ссылку и токен](github-setup.ru.md), сохраните и примените. Затем нажмите **Обновить сейчас**. Не вставляйте токен в командную строку или адрес файла.
 
 ## Расписание
 
@@ -37,13 +37,13 @@ apk add --allow-untrusted /tmp/PACKAGE.apk
 В SSH можно получить результат без токена и ссылок серверов:
 
 ```sh
-/usr/libexec/podkop-sattelite/run status
+/usr/libexec/podkop-config-auto-updater/run status
 ```
 
 Код `0`, JSON со статусом и временем следующего запуска подтверждают чтение состояния. Для явного обновления:
 
 ```sh
-/usr/libexec/podkop-sattelite/run update
+/usr/libexec/podkop-config-auto-updater/run update
 ```
 
 Код `0` и `applied` означают сохранение изменений и успешный возврат команды перезапуска Podkop; `unchanged` — отсутствие изменений. Код `1` означает ошибку, прежняя конфигурация обычно сохранена; точный результат смотрите в поле `error`. Это не доказывает доступность VPN, качество маршрутизации или завершение всех внутренних операций Podkop.
@@ -52,10 +52,10 @@ apk add --allow-untrusted /tmp/PACKAGE.apk
 
 | Путь | Назначение |
 | --- | --- |
-| `/etc/config/podkop_sattelite` | Настройки и токен, права `600` |
-| `/etc/podkop-sattelite/schedule.json` | Постоянное расписание, права `600` |
-| `/etc/podkop-sattelite/previous-podkop` | Предыдущая конфигурация перед последним изменением, права `600` |
-| `/tmp/podkop-sattelite/status.json` | Последний результат; исчезает при перезагрузке |
+| `/etc/config/podkop_config_auto_updater` | Настройки и токен, права `600` |
+| `/etc/podkop-config-auto-updater/schedule.json` | Постоянное расписание, права `600` |
+| `/etc/podkop-config-auto-updater/previous-podkop` | Предыдущая конфигурация перед последним изменением, права `600` |
+| `/tmp/podkop-config-auto-updater/status.json` | Последний результат; исчезает при перезагрузке |
 
 ## Восстановление
 
@@ -64,9 +64,9 @@ apk add --allow-untrusted /tmp/PACKAGE.apk
 Для ручного восстановления сначала выключите **Работать** и сохраните настройку. Убедитесь, что никто не редактирует Podkop и операция обновления закончилась. Затем выполните:
 
 ```sh
-cp /etc/config/podkop /etc/podkop-sattelite/before-manual-restore
-cp /etc/podkop-sattelite/previous-podkop /etc/config/podkop
-chmod 600 /etc/config/podkop /etc/podkop-sattelite/before-manual-restore
+cp /etc/config/podkop /etc/podkop-config-auto-updater/before-manual-restore
+cp /etc/podkop-config-auto-updater/previous-podkop /etc/config/podkop
+chmod 600 /etc/config/podkop /etc/podkop-config-auto-updater/before-manual-restore
 /etc/init.d/podkop restart
 ```
 
@@ -77,9 +77,9 @@ chmod 600 /etc/config/podkop /etc/podkop-sattelite/before-manual-restore
 Выполните для вашего пакетного менеджера:
 
 ```sh
-/etc/init.d/podkop_sattelite stop
-/etc/init.d/podkop_sattelite disable
-opkg remove luci-app-podkop-sattelite
+/etc/init.d/podkop_config_auto_updater stop
+/etc/init.d/podkop_config_auto_updater disable
+opkg remove luci-app-podkop-config-auto-updater
 ```
 
-На OpenWrt 25.12 последняя команда — `apk del luci-app-podkop-sattelite`. Ожидается код `0`. Конфигурация Podkop остаётся; каталог `/etc/podkop-sattelite` и настройки загрузчика могут сохраняться. Отзовите ненужный токен на GitHub. Для возвращения программы установите пакет заново.
+На OpenWrt 25.12 последняя команда — `apk del luci-app-podkop-config-auto-updater`. Ожидается код `0`. Конфигурация Podkop остаётся; каталог `/etc/podkop-config-auto-updater` и настройки загрузчика могут сохраняться. Отзовите ненужный токен на GitHub. Для возвращения программы установите пакет заново.
