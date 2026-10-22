@@ -33,4 +33,16 @@ for (let minute = 0; minute <= 30; minute++) {
 	let scheduled = localtime(core.nextRun(first, 1, minute));
 	check(scheduled.hour == 3 && scheduled.min == minute && scheduled.mday == 1, '03:00..03:30 across month boundary');
 }
+let before = timelocal({ year: 2026, mon: 11, mday: 2, hour: 2, min: 0, sec: 0, isdst: -1 });
+let planned = core.planSchedule(before, null, 1, 'MSK-3', 17);
+check(!planned.due && planned.changed && localtime(planned.state.next).min == 17, 'persist random minute');
+let restarted = core.planSchedule(before + 600, planned.state, 1, 'MSK-3', 30);
+check(!restarted.changed && restarted.state.next == planned.state.next, 'restart must not reroll minute');
+let due = core.planSchedule(planned.state.next, planned.state, 1, 'MSK-3', 0);
+check(due.due && localtime(due.state.next).mday == 3 && localtime(due.state.next).min == 0, 'daily run chooses new minute');
+let missed = core.planSchedule(before + 43200, planned.state, 1, 'MSK-3', 30);
+check(!missed.due && localtime(missed.state.next).mday == 3, 'missed window never runs in daytime');
+let weekly = core.planSchedule(planned.state.next, { ...planned.state, interval: 7 }, 7, 'MSK-3', 11);
+check(weekly.due && localtime(weekly.state.next).mday == 9, 'weekly calendar interval');
+rejects(() => core.planSchedule(before, null, 2, 'MSK-3', 0), 'reject unknown interval');
 printf('core: %d checks passed\n', passed);

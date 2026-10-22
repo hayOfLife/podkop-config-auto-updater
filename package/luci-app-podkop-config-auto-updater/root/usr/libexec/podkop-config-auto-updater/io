@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+exec 9>&-
 case "$1" in
 	download)
 		work="$2"

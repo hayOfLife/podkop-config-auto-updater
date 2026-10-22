@@ -37,7 +37,7 @@ function statusText(status) {
 		text += ' Следующее обновление: ' + new Date(status.next_run * 1000).toLocaleString() + ' (время вашего браузера).';
 	if (status.state === 'applied') text += ' Последние изменения применены.';
 	if (status.state === 'unchanged') text += ' Последняя проверка: новых изменений нет.';
-	if (status.state === 'error') text += ' ' + (errors[status.error] || 'Конфигурация не принята: ' + status.error + '.');
+	if (status.state === 'error') text += ' ' + (errors[status.error] || 'Файл конфигурации не принят. Проверьте его по инструкции о формате файла.');
 	if (status.revision) text += ' Версия: ' + status.revision + '.';
 	if (status.counts) {
 		var added = 0, removed = 0, pending = 0;

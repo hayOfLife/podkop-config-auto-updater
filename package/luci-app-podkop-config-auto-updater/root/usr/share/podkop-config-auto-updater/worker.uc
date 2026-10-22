@@ -21,7 +21,7 @@ function status(result) {
 }
 
 function pending() {
-	for (let path in ['/tmp/.uci/podkop', ...fs.glob('/var/run/rpcd/uci-*/podkop')])
+	for (let path in ['/tmp/.uci/podkop', ...(fs.glob('/var/run/rpcd/uci-*/podkop') || [])])
 		if (length(fs.readfile(path) || '')) return true;
 	return false;
 }
@@ -34,11 +34,6 @@ function randomMinute() {
 	do { byte = ord(source.read(1)); } while (byte >= 248);
 	source.close();
 	return byte % 31;
-}
-
-function saveSchedule(now, days, interval, timezone) {
-	schedule = { next: core.nextRun(now, days, randomMinute()), interval, timezone };
-	atomicWrite(statePath, sprintf('%J', schedule));
 }
 
 function update() {
@@ -70,21 +65,11 @@ try {
 		let now = time();
 		if (now < 1735689600) die('clock_not_ready');
 		let interval = int(config.interval_days || '1');
-		if (index([1, 3, 7, 30], interval) < 0) die('invalid_interval');
 		let timezone = fs.readfile('/etc/TZ') || '';
-		if (!schedule || schedule.interval != interval || schedule.timezone != timezone) {
-			let today = core.nextRun(now, 0, 0);
-			saveSchedule(now, now < today ? 0 : 1, interval, timezone);
-		}
-		if (now < schedule.next) exit(0);
-		let date = localtime(now);
-		let due = schedule.next;
-		// После выключенного роутера пропущенное окно не переносится на дневное время
-		if (date.hour != 3 || date.min > 30) {
-			saveSchedule(now, date.hour < 3 ? 0 : 1, interval, timezone);
-			exit(0);
-		}
-		saveSchedule(due, interval, interval, timezone);
+		let plan = core.planSchedule(now, schedule, interval, timezone, randomMinute());
+		schedule = plan.state;
+		if (plan.changed) atomicWrite(statePath, sprintf('%J', schedule));
+		if (!plan.due) exit(0);
 	}
 	update();
 }

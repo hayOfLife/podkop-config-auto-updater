@@ -162,3 +162,16 @@ export function nextRun(now, days, minute) {
 	date.mday += days;
 	return timelocal(date);
 }
+
+export function planSchedule(now, previous, interval, timezone, minute) {
+	if (index([1, 3, 7, 30], interval) < 0) die('invalid_interval');
+	if (!previous || previous.interval != interval || previous.timezone != timezone || type(previous.next) != 'int') {
+		let next = nextRun(now, now < nextRun(now, 0, 0) ? 0 : 1, minute);
+		return { state: { next, interval, timezone }, due: false, changed: true };
+	}
+	if (now < previous.next) return { state: previous, due: false, changed: false };
+	let date = localtime(now);
+	let due = date.hour == 3 && date.min <= 30;
+	let next = due ? nextRun(now, interval, minute) : nextRun(now, date.hour < 3 ? 0 : 1, minute);
+	return { state: { next, interval, timezone }, due, changed: true };
+}
