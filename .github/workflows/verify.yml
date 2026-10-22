@@ -15,6 +15,7 @@ jobs:
       - run: sh scripts/testNative.sh
       - run: node scripts/checkSource.mjs
       - run: python3 tests/ipv6Test.py
+      - run: python3 tests/installerTest.py
       - run: git diff --check
   packages:
     runs-on: ubuntu-24.04

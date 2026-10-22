@@ -30,9 +30,9 @@ function pending() {
 function randomMinute() {
 	let source = fs.open('/dev/urandom', 'r');
 	if (!source) die('random_failed');
-	let byte;
+	let byte = 255;
 	// Отбрасываем остаток диапазона байта, чтобы все 31 значение были равновероятны
-	do { byte = ord(source.read(1)); } while (byte >= 248);
+	while (byte >= 248) byte = ord(source.read(1));
 	source.close();
 	return byte % 31;
 }

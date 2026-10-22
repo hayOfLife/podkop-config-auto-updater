@@ -6,7 +6,7 @@ export function normalize(kind, value) {
 		die('invalid_value');
 
 	if (kind == 'urltest_proxy_links') {
-		if (!match(value, /^(vless|ss|trojan|socks4|socks5|hy2|hysteria2):\/\/[^\s]+$/))
+		if (!match(value, /^(vless|ss|trojan|socks4|socks5|hy2|hysteria2):\/\/[^[:space:]]+$/))
 			die('unsupported_proxy');
 		return value;
 	}
@@ -29,7 +29,8 @@ export function normalize(kind, value) {
 	if (prefix > length(bytes) * 8)
 		die('invalid_subnet');
 	for (let i = 0; i < length(bytes); i++) {
-		let bits = max(0, min(8, prefix - i * 8));
+		let bits = prefix - i * 8;
+		bits = bits < 0 ? 0 : (bits > 8 ? 8 : bits);
 		bytes[i] &= (255 << (8 - bits)) & 255;
 	}
 	return arrtoip(bytes) + '/' + prefix;
@@ -72,7 +73,7 @@ export function validateFeed(feed) {
 }
 
 export function tokens(text) {
-	return filter(split(replace(text || '', /\/\/[^\n]*/g, ''), /[\s,]+/), v => length(v));
+	return filter(split(replace(text || '', /\/\/[^\n]*/g, ''), /[[:space:],]+/), v => length(v));
 }
 
 function storedKey(kind, value) {
