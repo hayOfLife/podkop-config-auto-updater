@@ -1,5 +1,7 @@
 # Podkop config auto updater
 
+**[Установить через скрипт](https://raw.githubusercontent.com/hayOfLife/podkop-config-auto-updater/main/install.sh)** · [Команды установки](docs/operations.ru.md#установка-и-обновление)
+
 Дополнение к Podkop для OpenWrt. Загружает конфигурацию из закрытого GitHub-репозитория или по прямой HTTPS-ссылке, объединяет списки и обновляет параметры секции `main`, DNS и загрузки списков.
 
 ## Установка
