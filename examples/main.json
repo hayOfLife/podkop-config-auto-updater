@@ -1,11 +1,30 @@
 {
   "schema_version": 2,
-  "revision": "example-1",
+  "revision": "demo-only-2026-10-22",
   "main": {
-    "urltest_proxy_links": [],
-    "user_domains": ["example.com", {"value": "old.example.com", "delete": true}],
-    "user_subnets": ["192.0.2.0/24", {"value": "198.51.100.0/24", "delete": true}],
-    "urltest_check_interval": "3m"
+    "connection_type": "proxy",
+    "proxy_config_type": "urltest",
+    "urltest_proxy_links": [
+      "vless://00000000-0000-4000-8000-000000000001@192.0.2.10:443?encryption=none&security=tls&sni=vpn.example.com&type=ws&host=vpn.example.com&path=%2Fdemo#DEMO-NOT-A-REAL-SERVER",
+      {"value": "trojan://DEMO-NOT-A-PASSWORD@198.51.100.20:443?security=tls&sni=old.example.net#DEMO-OLD-SERVER", "delete": true}
+    ],
+    "user_domain_list_type": "text",
+    "user_domains": ["example.com", "api.example.net", {"value": "old.example.com", "delete": true}],
+    "user_subnet_list_type": "text",
+    "user_subnets": ["203.0.113.0/24", "192.0.2.55/32", {"value": "198.51.100.0/24", "delete": true}],
+    "urltest_check_interval": "3m",
+    "urltest_tolerance": "50",
+    "remote_domain_lists": [
+      "https://lists.example.com/domains.txt",
+      {"value": "https://old.example.net/domains.txt", "delete": true}
+    ]
   },
-  "settings": {}
+  "settings": {
+    "dns_type": "doh",
+    "dns_server": "dns.example.com/dns-query",
+    "bootstrap_dns_server": "192.0.2.53",
+    "download_lists_via_proxy": "1",
+    "download_lists_via_proxy_section": "main",
+    "update_interval": "1d"
+  }
 }

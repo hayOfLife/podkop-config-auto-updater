@@ -1,4 +1,5 @@
 import { validateConfig, mergeConfig } from 'config';
+import { readfile } from 'fs';
 let passed = 0;
 function check(value, label) { if (!value) die(label); passed++; }
 function rejects(fn, label) { let failed = false; try { fn(); } catch (e) { failed = true; } check(failed, label); }
@@ -31,4 +32,8 @@ check(exists(deleted.patches.main, 'future_option') && deleted.patches.main.futu
 check(join(',', deleted.patches.main.community_lists) == 'google_play', 'generic list delete');
 check(!length(keys(mergeConfig({ future_option: 'new' }, {}, deletion, true).patches.main)), 'keep changed scalar on deletion mismatch');
 check(!length(keys(mergeConfig({ future_option: 'old' }, {}, deletion, false).patches.main)), 'respect deletion switch for all options');
+let example = validateConfig(json(readfile('examples/main.json')));
+let demo = mergeConfig({}, {}, example, true);
+check(length(demo.patches.main.urltest_proxy_links) == 1, 'synthetic example produces one demonstration proxy');
+check(demo.patches.settings.dns_type == 'doh', 'synthetic example settings use supported format');
 printf('config: %d checks passed\n', passed);
