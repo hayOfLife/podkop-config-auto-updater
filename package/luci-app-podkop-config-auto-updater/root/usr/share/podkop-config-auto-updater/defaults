@@ -1,6 +1,7 @@
 config settings 'main'
 	option enabled '1'
 	option allow_deletes '1'
+	option disable_ipv6 '0'
 	option interval_days '1'
 	option config_url ''
 	option github_token ''

@@ -1,0 +1,4 @@
+The OpenWrt package layout, documentation approach and IPv6 control approach
+are adapted from Sheepfold, Copyright (c) hayOfLife, MIT License:
+https://github.com/hayOfLife/luci-app-sheepfold-family-internet-control
+Reference revision: b8fef63b1b7834fb8800fa7a4b5ca53bd7c86b20

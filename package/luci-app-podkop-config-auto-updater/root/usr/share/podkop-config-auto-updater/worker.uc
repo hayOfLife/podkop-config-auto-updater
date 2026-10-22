@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
 import * as core from 'core';
+import { validateConfig, mergeConfig } from 'config';
 import { sourceRequest } from 'source';
 import { applyPatch, atomicWrite, writePrivate } from 'transaction';
 
@@ -47,15 +48,15 @@ function update() {
 	if (!data || length(data) > 1048576) die('invalid_size');
 	let parsed;
 	try { parsed = json(data); } catch (e) { die('invalid_json'); }
-	let feed = core.validateFeed(parsed);
+	let feed = validateConfig(parsed);
 	let original = fs.readfile('/etc/config/podkop');
 	if (!original) die('podkop_missing');
 	let podkop = cursor();
 	if (!podkop.load('podkop')) die('invalid_podkop');
 	let section = podkop.get_all('podkop', 'main') || {};
-	let merged = core.mergeSection(section, feed, config.allow_deletes == '1');
+	let merged = mergeConfig(section, podkop.get_all('podkop', 'settings') || {}, feed, config.allow_deletes == '1');
 	let changed = applyPatch({ work, config: '/etc/config/podkop', backup: '/etc/podkop-config-auto-updater/previous-podkop' },
-		merged.patch, original, pending, () => system([helper, 'restart'], 180000) == 0);
+		merged.patches, original, pending, () => system([helper, 'restart'], 180000) == 0);
 	status({ state: changed ? 'applied' : 'unchanged', revision: feed.revision, counts: merged.counts });
 }
 

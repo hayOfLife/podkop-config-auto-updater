@@ -10,18 +10,26 @@ export function atomicWrite(path, data) {
 	if (!fs.rename(path + '.new', path)) die('write_failed');
 }
 
-export function applyPatch(paths, patch, original, pending, restart) {
-	if (!length(keys(patch))) return false;
+export function applyPatch(paths, patches, original, pending, restart) {
+	if (!length(keys(patches.main)) && !length(keys(patches.settings))) return false;
 	if (pending()) die('pending_changes');
 	writePrivate(paths.work + '/podkop', original);
 	let staged = cursor(paths.work, paths.work + '/delta');
 	if (!staged.load('podkop')) die('invalid_podkop');
-	if (!staged.get('podkop', 'main')) staged.set('podkop', 'main', 'section');
-	if (staged.get('podkop', 'main') != 'section') die('incompatible_section');
-	for (let key, value in patch) {
-		if (type(value) == 'array' && !length(value)) staged.delete('podkop', 'main', key);
-		else if (!staged.set('podkop', 'main', key, value)) die('write_failed');
+	for (let section in ['main', 'settings']) {
+		if (!length(keys(patches[section]))) continue;
+		let expectedType = section == 'main' ? 'section' : 'settings';
+		if (!staged.get('podkop', section)) staged.set('podkop', section, expectedType);
+		if (staged.get('podkop', section) != expectedType) die('incompatible_section');
+		for (let key, value in patches[section]) {
+			if (value == null || (type(value) == 'array' && !length(value))) staged.delete('podkop', section, key);
+			else if (!staged.set('podkop', section, key, value)) die('write_failed');
+		}
 	}
+	let route = staged.get('podkop', 'settings', 'download_lists_via_proxy_section');
+	if (staged.get('podkop', 'settings', 'download_lists_via_proxy') == '1' &&
+		(!route || staged.get('podkop', route) != 'section' ||
+		index(['proxy', 'vpn'], staged.get('podkop', route, 'connection_type')) < 0)) die('invalid_proxy_section');
 	if (!staged.commit('podkop')) die('write_failed');
 	let updated = fs.readfile(paths.work + '/podkop');
 	if (updated == original) return false;

@@ -1,8 +1,11 @@
 {
-  "schema_version": 1,
-  "section": "main",
+  "schema_version": 2,
   "revision": "example-1",
-  "urltest_proxy_links": [],
-  "user_domains": ["example.com", {"value": "old.example.com", "delete": true}],
-  "user_subnets": ["192.0.2.0/24", {"value": "198.51.100.0/24", "delete": true}]
+  "main": {
+    "urltest_proxy_links": [],
+    "user_domains": ["example.com", {"value": "old.example.com", "delete": true}],
+    "user_subnets": ["192.0.2.0/24", {"value": "198.51.100.0/24", "delete": true}],
+    "urltest_check_interval": "3m"
+  },
+  "settings": {}
 }

@@ -1,0 +1,53 @@
+#!/bin/sh
+set -eu
+umask 077
+root="${CONFIG_UPDATER_TEST_ROOT:-}"
+proc_root="$root/proc/sys/net/ipv6/conf"
+state="$root/etc/podkop-config-auto-updater/ipv6-restore"
+managed="$root/etc/sysctl.d/99-podkop-config-auto-updater-disable-ipv6.conf"
+
+restore() {
+	[ -f "$state" ] || { [ ! -e "$managed" ]; return; }
+	# Сначала возвращаются общие флаги, затем отдельные интерфейсы со своими прежними значениями
+	while IFS='=' read -r name value; do
+		case "$name" in ''|*[!A-Za-z0-9_.:-]*) return 1 ;; esac
+		case "$value" in 0|1) ;; *) return 1 ;; esac
+		[ ! -e "$proc_root/$name/disable_ipv6" ] || printf '%s\n' "$value" > "$proc_root/$name/disable_ipv6"
+	done < "$state"
+	rm -f -- "$managed" "$state"
+}
+
+disable() {
+	[ -d "$proc_root" ] || return 0
+	mkdir -p "$(dirname "$state")" "$(dirname "$managed")"
+	if [ ! -f "$state" ]; then
+		for interface in "$proc_root/all" "$proc_root/default" "$proc_root"/*; do
+			[ -f "$interface/disable_ipv6" ] || continue
+			name="${interface##*/}"
+			value="$(cat "$interface/disable_ipv6")"
+			case "$value" in 0|1) ;; *) return 1 ;; esac
+			printf '%s=%s\n' "$name" "$value"
+		done > "$state.new"
+		# Исключаем повтор all/default, чтобы они не отменили восстановленные значения интерфейсов
+		awk -F= '!seen[$1]++' "$state.new" > "$state.filtered"
+		mv -f -- "$state.filtered" "$state"
+		rm -f "$state.new"
+	fi
+	printf '%s\n' 'net.ipv6.conf.all.disable_ipv6=1' 'net.ipv6.conf.default.disable_ipv6=1' > "$managed.new"
+	mv -f -- "$managed.new" "$managed"
+	printf '1\n' > "$proc_root/all/disable_ipv6"
+	printf '1\n' > "$proc_root/default/disable_ipv6"
+	for interface in "$proc_root"/*; do
+		[ ! -f "$interface/disable_ipv6" ] || printf '1\n' > "$interface/disable_ipv6"
+	done
+}
+
+case "${1:-apply}" in
+	apply)
+		if [ -n "$root" ]; then disabled="$(cat "$root/disabled")";
+		else disabled="$(uci -q get podkop_config_auto_updater.main.disable_ipv6 || printf 0)"; fi
+		if [ "$disabled" = 1 ]; then disable; else restore; fi
+		;;
+	release) restore ;;
+	*) exit 2 ;;
+esac

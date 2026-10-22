@@ -14,6 +14,14 @@ define Package/$(PKG_NAME)/conffiles
 /etc/config/podkop_config_auto_updater
 endef
 
+define Package/$(PKG_NAME)/prerm
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+/etc/init.d/podkop_config_auto_updater stop
+/usr/libexec/podkop-config-auto-updater/ipv6 release || exit 1
+exit 0
+endef
+
 include $(TOPDIR)/feeds/luci/luci.mk
 
-# Подключение через feed использует стандартные правила упаковки LuCI
+# call BuildPackage - OpenWrt buildroot signature

@@ -38,6 +38,7 @@ function statusText(status) {
 	if (status.state === 'applied') text += ' Последние изменения применены.';
 	if (status.state === 'unchanged') text += ' Последняя проверка: новых изменений нет.';
 	if (status.state === 'error') text += ' ' + (errors[status.error] || 'Файл конфигурации не принят. Проверьте его по инструкции о формате файла.');
+	if (status.ipv6_error) text += ' Не удалось применить настройку IPv6. Проверьте системный журнал роутера.';
 	if (status.revision) text += ' Версия: ' + status.revision + '.';
 	if (status.counts) {
 		var added = 0, removed = 0, pending = 0;
@@ -55,7 +56,7 @@ return view.extend({
 	load: function() { return readStatus(); },
 	render: function(status) {
 		var map = new form.Map('podkop_config_auto_updater', 'Podkop config auto updater',
-			'Добавляет серверы URLTest, пользовательские домены и подсети в секцию main программы Podkop.');
+			'Обновляет секцию main и указанные в файле настройки DNS и загрузки списков программы Podkop.');
 		var section = map.section(form.NamedSection, 'main', 'settings');
 		section.addremove = false;
 		var option = section.option(form.Flag, 'enabled', 'Работать');
@@ -73,6 +74,10 @@ return view.extend({
 		option.default = '1';
 		option.rmempty = false;
 		option.description = 'Удаляются только записи с пометкой delete. Остальные существующие записи сохраняются.';
+		option = section.option(form.Flag, 'disable_ipv6', 'Выключить ip v6');
+		option.default = '0';
+		option.rmempty = false;
+		option.description = 'Отключает IPv6 на роутере после сохранения. При снятии галочки возвращает прежнее состояние. Не зависит от галочки «Работать».';
 		option = section.option(form.Value, 'config_url', 'Ссылка на файл конфига');
 		option.placeholder = 'https://github.com/OWNER/REPO/blob/main/config/main.json';
 		option.rmempty = false;

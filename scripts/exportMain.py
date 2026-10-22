@@ -29,10 +29,9 @@ for word in words:
 def text_values(value):
     return list(dict.fromkeys(filter(None, re.split(r'[\s,]+', re.sub(r'//[^\n]*', '', value)))))
 
-feed = {'schema_version': 1, 'section': 'main', 'revision': 'initial-2026-10-22'}
-feed['urltest_proxy_links'] = options.get('urltest_proxy_links', [])
+feed = {'schema_version': 2, 'revision': 'initial-2026-10-22-v2', 'main': options, 'settings': {}}
 for field in ('user_domains', 'user_subnets'):
-    feed[field] = text_values(options.get(field + '_text', ''))
+    options[field] = text_values(options.pop(field + '_text', ''))
 args.output.parent.mkdir(parents=True, exist_ok=True)
 args.output.write_text(json.dumps(feed, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-print(json.dumps({key: len(feed[key]) for key in ('urltest_proxy_links', 'user_domains', 'user_subnets')}))
+print(json.dumps({key: len(options[key]) for key in ('urltest_proxy_links', 'user_domains', 'user_subnets')}))

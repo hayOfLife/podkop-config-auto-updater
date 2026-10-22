@@ -12,7 +12,7 @@ fs.mkdir(root + '/work/delta');
 let paths = { config: root + '/podkop', backup: root + '/previous', work: root + '/work' };
 let original = "config settings 'settings'\n option dns_server '192.0.2.1'\nconfig section 'main'\n option connection_type 'proxy'\nconfig section 'other'\n option connection_type 'vpn'\n";
 writePrivate(paths.config, original);
-let patch = { proxy_config_type: 'urltest', urltest_proxy_links: ['vless://test@example.test:443'], user_domains_text: 'example.test' };
+let patch = { main: { proxy_config_type: 'urltest', urltest_proxy_links: ['vless://test@example.test:443'], user_domains_text: 'example.test' }, settings: {} };
 let restarts = 0;
 check(applyPatch(paths, patch, original, () => false, () => { restarts++; return true; }), 'applies transaction');
 check(restarts == 1, 'restart only after change');
@@ -22,7 +22,7 @@ check(config.get('podkop', 'other', 'connection_type') == 'vpn', 'preserve other
 check(config.get('podkop', 'main', 'proxy_config_type') == 'urltest', 'persist target field');
 check(fs.readfile(paths.backup) == original, 'exact backup');
 let current = fs.readfile(paths.config);
-check(!applyPatch(paths, {}, current, () => false, () => { die('unexpected restart'); }), 'no restart on empty patch');
+check(!applyPatch(paths, { main: {}, settings: {} }, current, () => false, () => { die('unexpected restart'); }), 'no restart on empty patch');
 rejects(() => applyPatch(paths, patch, current, () => true, () => true), 'reject pending edits');
 check(fs.readfile(paths.config) == current, 'pending edit preserves configuration');
 writePrivate(paths.config, original);

@@ -11,9 +11,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update -qq && sudo apt-get install -y cmake libjson-c-dev libssl-dev
+      - run: sudo apt-get install -y --no-install-recommends -o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 libjson-c-dev
       - run: sh scripts/testNative.sh
       - run: node scripts/checkSource.mjs
+      - run: python3 tests/ipv6Test.py
       - run: git diff --check
   packages:
     runs-on: ubuntu-24.04
@@ -24,8 +25,10 @@ jobs:
         include:
           - arch: aarch64_cortex-a53-24.10.7
             format: ipk
+            series: '24.10'
           - arch: aarch64_cortex-a53-25.12.5
             format: apk
+            series: '25.12'
     steps:
       - uses: actions/checkout@v7
       - run: mkdir -p .build/sdk-output
@@ -43,8 +46,9 @@ jobs:
       - name: Collect package
         run: |
           mkdir -p dist
-          find .build/sdk-output -type f -name 'luci-app-podkop-config-auto-updater*.${{ matrix.format }}' -exec cp '{}' dist/ \;
-          test "$(find dist -type f | wc -l)" -eq 1
+          mapfile -t packages < <(find .build/sdk-output -type f -name 'luci-app-podkop-config-auto-updater*.${{ matrix.format }}')
+          test "${#packages[@]}" -eq 1
+          cp "${packages[0]}" 'dist/luci-app-podkop-config-auto-updater-openwrt-${{ matrix.series }}.${{ matrix.format }}'
           cd dist
           sha256sum * > SHA256SUMS
       - uses: actions/upload-artifact@v7

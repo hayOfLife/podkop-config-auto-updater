@@ -3,7 +3,7 @@ set -eu
 umask 077
 case "${1:-}" in
 	status)
-		ucode -e 'import { readfile } from "fs"; import { cursor } from "uci"; function load(path) { try { return json(readfile(path)) || {}; } catch(e) { return {}; } } let s = load("/tmp/podkop-config-auto-updater/status.json"); let p = load("/etc/podkop-config-auto-updater/schedule.json"); s.enabled = cursor().get("podkop_config_auto_updater", "main", "enabled") == "1"; s.next_run = p.next; print(sprintf("%J\n", s));'
+		ucode -e 'import { readfile } from "fs"; import { cursor } from "uci"; function load(path) { try { return json(readfile(path)) || {}; } catch(e) { return {}; } } let s = load("/tmp/podkop-config-auto-updater/status.json"); let p = load("/etc/podkop-config-auto-updater/schedule.json"); s.enabled = cursor().get("podkop_config_auto_updater", "main", "enabled") == "1"; s.ipv6_error = !!readfile("/tmp/podkop-config-auto-updater/ipv6-error"); s.next_run = p.next; print(sprintf("%J\n", s));'
 		exit 0 ;;
 	daemon)
 		while :; do "$0" tick >/dev/null 2>&1 || true; sleep 30; done ;;
