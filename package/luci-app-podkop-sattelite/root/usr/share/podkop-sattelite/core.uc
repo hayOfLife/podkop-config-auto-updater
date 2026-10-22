@@ -139,7 +139,7 @@ export function mergeSection(section, feed, allowDeletes) {
 		let current = mode == 'dynamic' ? dynamic : textValues;
 		let merged = mergeList(kind, current, feed[kind], allowDeletes);
 		counts[kind] = { added: merged.added, removed: merged.removed, pending: merged.pending };
-		if (merged.added || merged.removed) {
+		if (merged.added || merged.removed || (mode == 'disabled' && length(merged.values) && length(feed[kind]))) {
 			if (mode == 'dynamic') patch[kind] = merged.values;
 			else patch[kind + '_text'] = join('\n', merged.values);
 			patch[typeKey] = length(merged.values) ? (mode == 'dynamic' ? 'dynamic' : 'text') : 'disabled';

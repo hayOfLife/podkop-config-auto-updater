@@ -1,0 +1,51 @@
+import * as fs from 'fs';
+import { cursor } from 'uci';
+import { applyPatch, writePrivate } from 'transaction';
+import { sourceRequest } from 'source';
+
+let passed = 0;
+function check(value, label) { if (!value) die(label); passed++; }
+function rejects(fn, label) { let failed = false; try { fn(); } catch (e) { failed = true; } check(failed, label); }
+let root = fs.mkdtemp('/tmp/sattelite-test.XXXXXX');
+fs.mkdir(root + '/work');
+fs.mkdir(root + '/work/delta');
+let paths = { config: root + '/podkop', backup: root + '/previous', work: root + '/work' };
+let original = "config settings 'settings'\n option dns_server '192.0.2.1'\nconfig section 'main'\n option connection_type 'proxy'\nconfig section 'other'\n option connection_type 'vpn'\n";
+writePrivate(paths.config, original);
+let patch = { proxy_config_type: 'urltest', urltest_proxy_links: ['vless://test@example.test:443'], user_domains_text: 'example.test' };
+let restarts = 0;
+check(applyPatch(paths, patch, original, () => false, () => { restarts++; return true; }), 'applies transaction');
+check(restarts == 1, 'restart only after change');
+let config = cursor(root, root + '/work/delta');
+check(config.get('podkop', 'settings', 'dns_server') == '192.0.2.1', 'preserve global settings');
+check(config.get('podkop', 'other', 'connection_type') == 'vpn', 'preserve other section');
+check(config.get('podkop', 'main', 'proxy_config_type') == 'urltest', 'persist target field');
+check(fs.readfile(paths.backup) == original, 'exact backup');
+let current = fs.readfile(paths.config);
+check(!applyPatch(paths, {}, current, () => false, () => { die('unexpected restart'); }), 'no restart on empty patch');
+rejects(() => applyPatch(paths, patch, current, () => true, () => true), 'reject pending edits');
+check(fs.readfile(paths.config) == current, 'pending edit preserves configuration');
+writePrivate(paths.config, original);
+restarts = 0;
+rejects(() => applyPatch(paths, patch, original, () => false, () => { restarts++; return restarts == 2; }), 'failed restart triggers rollback');
+check(restarts == 2 && fs.readfile(paths.config) == original, 'rollback restores exact file');
+let checks = 0;
+rejects(() => applyPatch(paths, patch, original, () => {
+	if (++checks == 2) writePrivate(paths.config, original + '# concurrent edit\n');
+	return false;
+}, () => true), 'reject concurrent edit');
+check(index(fs.readfile(paths.config), 'concurrent edit') >= 0, 'keep concurrent edit');
+let request = sourceRequest('https://github.com/example/config/blob/main/config/main.json', 'test_token');
+check(request.url == 'https://api.github.com/repos/example/config/contents/config/main.json?ref=main', 'convert GitHub file link');
+check(index(request.headers, 'Bearer test_token') >= 0, 'GitHub authorization header');
+rejects(() => sourceRequest('https://example.test/config.json', 'test_token'), 'never send GitHub token to custom host');
+rejects(() => sourceRequest('https://api.github.com.evil.test/config.json', 'test_token'), 'reject lookalike host token transfer');
+rejects(() => sourceRequest('http://example.test/config.json', ''), 'require HTTPS');
+rejects(() => sourceRequest('https://github.com/example/config/blob/main/config/main.json', 'bad\nInjected: true'), 'reject header injection');
+for (let file in fs.glob(root + '/work/delta/*')) fs.unlink(file);
+fs.rmdir(root + '/work/delta');
+for (let file in fs.glob(root + '/work/*')) fs.unlink(file);
+fs.rmdir(root + '/work');
+for (let file in fs.glob(root + '/*')) fs.unlink(file);
+fs.rmdir(root);
+printf('integration: %d checks passed\n', passed);

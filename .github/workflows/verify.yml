@@ -13,4 +13,41 @@ jobs:
       - uses: actions/checkout@v7
       - run: sudo apt-get update -qq && sudo apt-get install -y cmake libjson-c-dev libssl-dev
       - run: sh scripts/testNative.sh
+      - run: node scripts/checkSource.mjs
       - run: git diff --check
+  packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64_cortex-a53-24.10.7
+            format: ipk
+          - arch: aarch64_cortex-a53-25.12.5
+            format: apk
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build native OpenWrt package
+        uses: openwrt/gh-action-sdk@7fc2640243284ecc44f4a9c3f749a61746ee02cb
+        env:
+          ARCH: ${{ matrix.arch }}
+          CONTAINER: ghcr.io/openwrt/sdk
+          FEEDNAME: sattelite
+          FEED_DIR: ${{ github.workspace }}/package
+          ARTIFACTS_DIR: ${{ github.workspace }}/.build/sdk-output
+          PACKAGES: luci-app-podkop-sattelite
+          NO_SHFMT_CHECK: 1
+          V: s
+      - name: Collect package
+        run: |
+          mkdir -p dist
+          find .build/sdk-output -type f -name 'luci-app-podkop-sattelite*.${{ matrix.format }}' -exec cp '{}' dist/ \;
+          test "$(find dist -type f | wc -l)" -eq 1
+          cd dist
+          sha256sum * > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: podkop-sattelite-${{ matrix.format }}
+          path: dist/*
+          if-no-files-found: error

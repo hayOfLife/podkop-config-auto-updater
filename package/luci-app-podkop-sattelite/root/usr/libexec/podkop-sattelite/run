@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+umask 077
+case "${1:-}" in
+	status)
+		ucode -e 'import { readfile } from "fs"; import { cursor } from "uci"; let s = {}; let p = {}; try { s = json(readfile("/tmp/podkop-sattelite/status.json")) || {}; p = json(readfile("/etc/podkop-sattelite/schedule.json")) || {}; } catch(e) {} s.enabled = cursor().get("podkop_sattelite", "main", "enabled") == "1"; s.next_run = p.next; print(sprintf("%J\n", s));'
+		exit 0 ;;
+	daemon)
+		while :; do "$0" tick >/dev/null 2>&1 || true; sleep 30; done ;;
+	update|tick) ;;
+	*) exit 2 ;;
+esac
+mkdir -p /tmp/podkop-sattelite /etc/podkop-sattelite
+chmod 700 /tmp/podkop-sattelite /etc/podkop-sattelite
+exec 9>/tmp/podkop-sattelite/lock
+flock -n 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
+work="$(mktemp -d /tmp/podkop-sattelite/run.XXXXXX)"
+trap 'rm -rf -- "$work"' EXIT HUP INT TERM
+mkdir "$work/delta"
+ucode -L /usr/share/podkop-sattelite /usr/share/podkop-sattelite/worker.uc "$1" "$work"

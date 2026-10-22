@@ -1,0 +1,15 @@
+{
+  "luci-app-podkop-sattelite": {
+    "description": "Configure podkop sattelite and request an update",
+    "read": {
+      "uci": ["podkop_sattelite"],
+      "ubus": {"file": ["exec"]},
+      "file": {"/usr/libexec/podkop-sattelite/run status": ["exec"]}
+    },
+    "write": {
+      "uci": ["podkop_sattelite"],
+      "ubus": {"file": ["exec"]},
+      "file": {"/usr/libexec/podkop-sattelite/run update": ["exec"]}
+    }
+  }
+}
