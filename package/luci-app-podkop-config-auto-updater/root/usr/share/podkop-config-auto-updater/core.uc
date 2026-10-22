@@ -2,7 +2,7 @@ const fields = ['urltest_proxy_links', 'user_domains', 'user_subnets'];
 
 export function normalize(kind, value) {
 	if (kind == 'literal') return value;
-	if (type(value) != 'string' || !length(value) || length(value) > 8192 || match(value, /[[:space:][:cntrl:]]/))
+	if (type(value) != 'string' || !length(value) || length(value) > 8192 || index(value, '\u0000') >= 0 || match(value, /[[:space:][:cntrl:]]/))
 		die('invalid_value');
 
 	if (kind == 'urltest_proxy_links') {
@@ -38,7 +38,8 @@ export function normalize(kind, value) {
 
 export function validateFeed(feed) {
 	if (type(feed) != 'object' || feed.schema_version !== 1 || feed.section !== 'main' ||
-		type(feed.revision) != 'string' || !match(feed.revision, /^[a-zA-Z0-9._-]{1,80}$/))
+		type(feed.revision) != 'string' || index(feed.revision, '\u0000') >= 0 || match(feed.revision, /[[:space:][:cntrl:]]/) ||
+		!match(feed.revision, /^[a-zA-Z0-9._-]{1,80}$/))
 		die('invalid_schema');
 	for (let key in keys(feed))
 		if (index(['schema_version', 'section', 'revision', ...fields], key) < 0)

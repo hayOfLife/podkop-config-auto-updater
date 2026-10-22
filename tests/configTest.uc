@@ -17,6 +17,9 @@ let repeated = mergeConfig(result.patches.main, result.patches.settings, feed, t
 check(!length(keys(repeated.patches.main)) && !length(keys(repeated.patches.settings)), 'extended configuration idempotent');
 rejects(() => validateConfig({ ...input, settings: { arbitrary_global: 'value' } }), 'reject unrelated global setting');
 rejects(() => validateConfig({ ...input, main: { '.type': 'settings' } }), 'reject UCI metadata key');
+rejects(() => validateConfig({ ...input, main: { 'valid\ninjected': 'value' } }), 'reject newline in option name');
+rejects(() => validateConfig({ ...input, revision: 'good\ninjected' }), 'reject newline in revision');
+rejects(() => validateConfig({ ...input, settings: { dns_server: 'example.com\ninjected' } }), 'reject newline in DNS');
 rejects(() => validateConfig({ ...input, main: { user_domains: [], user_domains_text: 'example.com' } }), 'reject ambiguous representations');
 rejects(() => validateConfig({ ...input, settings: { dns_type: 'invalid' } }), 'reject unknown DNS protocol');
 rejects(() => validateConfig({ ...input, settings: { download_lists_via_proxy: true } }), 'UCI flags must be explicit strings');

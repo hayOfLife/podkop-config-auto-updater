@@ -16,6 +16,7 @@ function operation(value) {
 }
 
 function validateSetting(key, value) {
+	if (match(value, /[[:space:][:cntrl:]]/)) die('invalid_setting');
 	if (key == 'dns_type' && index(['udp', 'doh', 'dot'], value) < 0) die('invalid_dns_type');
 	if (key == 'download_lists_via_proxy' && index(['0', '1'], value) < 0) die('invalid_flag');
 	if (key == 'update_interval' && index(['1h', '3h', '12h', '1d', '3d'], value) < 0) die('invalid_list_interval');
@@ -37,7 +38,7 @@ export function validateConfig(input) {
 	for (let group in ['main', 'settings']) {
 		if (length(keys(input[group])) > 256) die('too_many_options');
 		for (let key, value in input[group]) {
-			if (!match(key, /^[a-z][a-z0-9_]{0,63}$/)) die('invalid_option_name');
+			if (index(key, '\u0000') >= 0 || match(key, /[[:space:][:cntrl:]]/) || !match(key, /^[a-z][a-z0-9_]{0,63}$/)) die('invalid_option_name');
 			if (group == 'settings' && index(settingsFields, key) < 0) die('unsupported_setting');
 			if (group == 'main' && index(listFields, key) >= 0) { lists[key] = value; continue; }
 			if (group == 'main' && index(['user_domains_text', 'user_subnets_text'], key) >= 0) {
