@@ -14,6 +14,7 @@ jobs:
       - run: sudo apt-get install -y --no-install-recommends -o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 libjson-c-dev
       - run: sh scripts/testNative.sh
       - run: node scripts/checkSource.mjs
+      - run: node tests/actionsUiTest.mjs
       - run: python3 tests/ipv6Test.py
       - run: python3 tests/installerTest.py
       - run: git diff --check

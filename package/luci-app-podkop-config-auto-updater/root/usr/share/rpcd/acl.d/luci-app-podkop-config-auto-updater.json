@@ -1,15 +1,23 @@
 {
   "luci-app-podkop-config-auto-updater": {
-    "description": "Configure Podkop config auto updater and request an update",
+    "description": "Configure Podkop config auto updater, test the source and request an update",
     "read": {
       "uci": ["podkop_config_auto_updater"],
       "ubus": {"file": ["exec"]},
-      "file": {"/usr/libexec/podkop-config-auto-updater/run status": ["exec"]}
+      "file": {
+        "/usr/libexec/podkop-config-auto-updater/run status": ["exec"],
+        "/usr/libexec/podkop-config-auto-updater/software status": ["exec"]
+      }
     },
     "write": {
       "uci": ["podkop_config_auto_updater"],
       "ubus": {"file": ["exec"]},
-      "file": {"/usr/libexec/podkop-config-auto-updater/run update": ["exec"]}
+      "file": {
+        "/usr/libexec/podkop-config-auto-updater/run update": ["exec"],
+        "/usr/libexec/podkop-config-auto-updater/run test": ["exec"],
+        "/usr/libexec/podkop-config-auto-updater/software podkop": ["exec"],
+        "/usr/libexec/podkop-config-auto-updater/software self": ["exec"]
+      }
     }
   }
 }

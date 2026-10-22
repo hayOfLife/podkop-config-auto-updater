@@ -7,11 +7,15 @@ case "${1:-}" in
 		exit 0 ;;
 	daemon)
 		while :; do "$0" tick >/dev/null 2>&1 || true; sleep 30; done ;;
-	update|tick) ;;
+	update|tick|test) ;;
 	*) exit 2 ;;
 esac
-mkdir -p /tmp/podkop-config-auto-updater /etc/podkop-config-auto-updater
-chmod 700 /tmp/podkop-config-auto-updater /etc/podkop-config-auto-updater
+mkdir -p /tmp/podkop-config-auto-updater
+chmod 700 /tmp/podkop-config-auto-updater
+if [ "$1" != test ]; then
+	mkdir -p /etc/podkop-config-auto-updater
+	chmod 700 /etc/podkop-config-auto-updater
+fi
 exec 9>/tmp/podkop-config-auto-updater/lock
 flock -n 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
 work="$(mktemp -d /tmp/podkop-config-auto-updater/run.XXXXXX)"

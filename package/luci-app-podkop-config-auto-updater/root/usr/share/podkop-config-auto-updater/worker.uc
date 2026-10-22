@@ -9,9 +9,13 @@ const statePath = '/etc/podkop-config-auto-updater/schedule.json';
 const statusPath = '/tmp/podkop-config-auto-updater/status.json';
 const helper = '/usr/libexec/podkop-config-auto-updater/io';
 const work = ARGV[1];
+const testing = ARGV[0] == 'test';
 let config = cursor().get_all('podkop_config_auto_updater', 'main') || {};
+let progress = { downloaded: false, parsed: false, valid: false };
 let schedule;
-try { schedule = json(fs.readfile(statePath)); } catch (e) { schedule = null; }
+if (!testing) {
+	try { schedule = json(fs.readfile(statePath)); } catch (e) { schedule = null; }
+}
 
 function status(result) {
 	result.time = time();
@@ -37,18 +41,29 @@ function randomMinute() {
 	return byte % 31;
 }
 
-function update() {
-	if (!fs.stat('/etc/init.d/podkop')) die('podkop_missing');
-	if (pending()) die('pending_changes');
+function fetchFeed() {
 	let request = sourceRequest(config.config_url, config.github_token);
 	writePrivate(work + '/headers', request.headers);
 	if (system([helper, 'download', work, request.url], 75000) != 0) die('download_failed');
 	fs.unlink(work + '/headers');
+	progress.downloaded = true;
+
 	let data = fs.readfile(work + '/feed.json');
 	if (!data || length(data) > 1048576) die('invalid_size');
 	let parsed;
 	try { parsed = json(data); } catch (e) { die('invalid_json'); }
+	progress.parsed = true;
+
 	let feed = validateConfig(parsed);
+	progress.valid = true;
+	return feed;
+}
+
+function update() {
+	if (!fs.stat('/etc/init.d/podkop')) die('podkop_missing');
+	if (pending()) die('pending_changes');
+	let feed = fetchFeed();
+
 	let original = fs.readfile('/etc/config/podkop');
 	if (!original) die('podkop_missing');
 	let podkop = cursor();
@@ -61,6 +76,12 @@ function update() {
 }
 
 try {
+	if (testing) {
+		let feed = fetchFeed();
+		print(sprintf('%J\n', { state: 'tested', ...progress, revision: feed.revision }));
+		exit(0);
+	}
+
 	if (ARGV[0] == 'tick') {
 		if (config.enabled != '1') exit(0);
 		let now = time();
@@ -77,6 +98,7 @@ try {
 catch (error) {
 	let code = split(error.message || '', '\n')[0];
 	if (!match(code, /^[a-z_]+$/)) code = 'internal_error';
-	status({ state: 'error', error: code });
+	if (testing) print(sprintf('%J\n', { state: 'error', error: code, ...progress }));
+	else status({ state: 'error', error: code });
 	exit(1);
 }

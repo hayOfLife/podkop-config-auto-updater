@@ -1,0 +1,42 @@
+#!/bin/sh
+set -eu
+umask 077
+exec 8>&- 9>&-
+action="$1"
+shift
+case "$action" in
+	fetch)
+		curl --disable --silent --fail --location --proto '=https' --proto-redir '=https' \
+			--max-redirs 5 --connect-timeout 15 --max-time 120 --max-filesize "$3" \
+			--output "$2" -- "$1" 2>/dev/null
+		exit $? ;;
+	verify)
+		printf '%s  %s\n' "$2" "$1" | sha256sum -c - >/dev/null 2>&1
+		exit $? ;;
+esac
+. /etc/openwrt_release
+case "${DISTRIB_RELEASE:-}" in
+	24.10.*) manager=opkg; series=24.10; format=ipk ;;
+	25.12.*) manager=apk; series=25.12; format=apk ;;
+	*) exit 2 ;;
+esac
+command -v "$manager" >/dev/null 2>&1 || exit 2
+case "$action" in
+	platform) printf '%s %s\n' "$series" "$format" > "$1/platform" ;;
+	version)
+		case "$1" in podkop|luci-app-podkop|luci-i18n-podkop-ru|luci-app-podkop-config-auto-updater) ;; *) exit 2 ;; esac
+		if [ "$manager" = opkg ]; then
+			opkg status "$1" 2>/dev/null | sed -n 's/^Version: //p' | sed -n '1p' > "$2/version"
+		else
+			apk info --from installed --fields version --format json "$1" 2>/dev/null |
+				sed -n 's/^[[:space:]]*"version": "\([^"]*\)".*/\1/p' | sed -n '1p' > "$2/version"
+		fi ;;
+	newer)
+		if [ "$manager" = opkg ]; then opkg compare-versions "$1" '>' "$2" >/dev/null 2>&1;
+		else [ "$(apk version -t "$1" "$2" 2>/dev/null)" = '>' ]; fi ;;
+	index) "$manager" update >/dev/null 2>&1 ;;
+	install)
+		if [ "$manager" = opkg ]; then opkg install "$@" >/dev/null 2>&1;
+		else apk add --allow-untrusted "$@" >/dev/null 2>&1; fi ;;
+	*) exit 2 ;;
+esac

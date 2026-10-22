@@ -17,7 +17,9 @@ build_source ucode https://github.com/jow-/ucode.git 4a28662538275b67a0bcf11de25
 export LD_LIBRARY_PATH="$tools_dir/install/lib"
 export PATH="$tools_dir/install/bin:$PATH"
 sh -n install.sh
-ucode -L "$tools_dir/install/lib/ucode" -L "$PWD/package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater" -c -o "$tools_dir/worker.ucb" package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater/worker.uc
+for worker in worker software; do
+	ucode -L "$tools_dir/install/lib/ucode" -L "$PWD/package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater" -c -o "$tools_dir/$worker.ucb" "package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater/$worker.uc"
+done
 for script in package/luci-app-podkop-config-auto-updater/root/usr/libexec/podkop-config-auto-updater/* package/luci-app-podkop-config-auto-updater/root/etc/init.d/* package/luci-app-podkop-config-auto-updater/root/etc/uci-defaults/*; do
 	sh -n "$script"
 done
@@ -26,3 +28,4 @@ ucode -L "$tools_dir/install/lib/ucode" -L "$PWD/package/luci-app-podkop-config-
 if [ -f tests/integrationTest.uc ]; then
 	ucode -L "$tools_dir/install/lib/ucode" -L "$PWD/package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater" tests/integrationTest.uc
 fi
+sudo python3 tests/routerActionsTest.py "$tools_dir/install"

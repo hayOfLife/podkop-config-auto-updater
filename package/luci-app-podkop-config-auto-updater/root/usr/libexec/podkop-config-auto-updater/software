@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+umask 077
+runtime=/tmp/podkop-config-auto-updater
+case "${1:-}" in status|self|podkop) ;; *) exit 2 ;; esac
+mkdir -p "$runtime"
+chmod 700 "$runtime"
+exec 8>"$runtime/software.lock"
+if [ "$1" = status ]; then
+	if flock -n 8; then active=0; else active=1; fi
+	ucode -e 'import { readfile } from "fs"; let s; try { s = json(readfile("/tmp/podkop-config-auto-updater/software.json")); } catch(e) {} s ||= { state: "idle" }; if (s.state == "running" && ARGV[0] == "0") { s.state = "error"; s.error = "interrupted"; } print(sprintf("%J\n", s));' "$active"
+	exit 0
+fi
+flock -n 8 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
+exec 9>"$runtime/lock"
+flock -n 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
+work="$(mktemp -d "$runtime/software.XXXXXX")"
+trap 'rm -rf -- "$work"' EXIT
+# Копии исполняемых файлов переживают замену пакета при самообновлении
+cp /usr/share/podkop-config-auto-updater/software.uc "$work/software.uc"
+cp /usr/libexec/podkop-config-auto-updater/software-io "$work/software-io"
+printf '{"state":"running","target":"%s","stage":"checking"}\n' "$1" > "$runtime/software.json.new"
+mv "$runtime/software.json.new" "$runtime/software.json"
+(
+	trap 'rm -rf -- "$work"' EXIT
+	ucode "$work/software.uc" "$1" "$work"
+) </dev/null >/dev/null 2>&1 &
+# Родитель закрывает дескрипторы без снятия блокировок, которые удерживает дочерний процесс
+trap - EXIT
+exec 8>&- 9>&-
+printf '{"state":"running","target":"%s"}\n' "$1"
