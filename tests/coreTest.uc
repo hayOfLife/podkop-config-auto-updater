@@ -28,6 +28,9 @@ check(length(keys(repeated.patch)) == 0, 'idempotent repeated update');
 check(length(keys(core.mergeSection(section, feed(['example.com']), true).patch)) == 0, 'keep unchanged comments');
 rejects(() => core.mergeSection(section, feed([], [], [{ value: section.urltest_proxy_links[0], delete: true }]), true), 'retain at least one proxy');
 rejects(() => core.mergeSection({ connection_type: 'vpn' }, feed([], [], ['ss://abc@test:443']), true), 'do not convert VPN section');
+let ignored = core.mergeSection({ connection_type: 'vpn', user_domain_list_type: 'disabled', user_domains_text: 'example.com' },
+	feed([{ value: 'example.com', delete: true }], [], [{ value: 'ss://abc@test:443', delete: true }]), false);
+check(length(keys(ignored.patch)) == 0, 'disabled deletions must not alter modes');
 let first = timelocal({ year: 2026, mon: 10, mday: 31, hour: 12, min: 0, sec: 0, isdst: -1 });
 for (let minute = 0; minute <= 30; minute++) {
 	let scheduled = localtime(core.nextRun(first, 1, minute));

@@ -113,7 +113,8 @@ export function mergeSection(section, feed, allowDeletes) {
 	let oldProxies = section.urltest_proxy_links || [];
 	if (type(oldProxies) == 'string') oldProxies = [oldProxies];
 	let proxyOps = feed.urltest_proxy_links;
-	if (length(proxyOps)) {
+	counts.urltest_proxy_links = { added: 0, removed: 0, pending: length(filter(proxyOps, op => op.remove && !allowDeletes)) };
+	if (length(filter(proxyOps, op => !op.remove || allowDeletes))) {
 		if (section.connection_type && section.connection_type != 'proxy') die('incompatible_section');
 		let mode = section.proxy_config_type || 'url';
 		if (mode == 'url' && length(section.proxy_string || ''))
@@ -139,7 +140,7 @@ export function mergeSection(section, feed, allowDeletes) {
 		let current = mode == 'dynamic' ? dynamic : textValues;
 		let merged = mergeList(kind, current, feed[kind], allowDeletes);
 		counts[kind] = { added: merged.added, removed: merged.removed, pending: merged.pending };
-		if (merged.added || merged.removed || (mode == 'disabled' && length(merged.values) && length(feed[kind]))) {
+		if (merged.added || merged.removed || (mode == 'disabled' && length(merged.values) && length(filter(feed[kind], op => !op.remove)))) {
 			if (mode == 'dynamic') patch[kind] = merged.values;
 			else patch[kind + '_text'] = join('\n', merged.values);
 			patch[typeKey] = length(merged.values) ? (mode == 'dynamic' ? 'dynamic' : 'text') : 'disabled';
@@ -147,8 +148,10 @@ export function mergeSection(section, feed, allowDeletes) {
 		// Удаление из скрытого представления предотвращает возврат записи при переключении типа списка
 		let hidden = mergeList(kind, mode == 'dynamic' ? textValues : dynamic,
 			filter(feed[kind], op => op.remove), allowDeletes);
-		if (hidden.removed)
+		if (hidden.removed) {
 			patch[mode == 'dynamic' ? kind + '_text' : kind] = mode == 'dynamic' ? join('\n', hidden.values) : hidden.values;
+			counts[kind].removed += hidden.removed;
+		}
 	}
 	return { patch, counts };
 }

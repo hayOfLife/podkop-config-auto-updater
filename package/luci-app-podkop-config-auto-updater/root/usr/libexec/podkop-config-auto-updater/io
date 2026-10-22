@@ -4,7 +4,7 @@ exec 9>&-
 case "$1" in
 	download)
 		work="$2"
-		code="$(curl --silent --fail --proto '=https' --max-redirs 0 \
+		code="$(curl --disable --silent --fail --proto '=https' --max-redirs 0 \
 			--connect-timeout 15 --max-time 60 --max-filesize 1048576 \
 			--header "@$work/headers" --output "$work/feed.json" \
 			--write-out '%{http_code}' -- "$3" 2>/dev/null)" || exit 1
