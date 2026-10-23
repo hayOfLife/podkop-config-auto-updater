@@ -4,6 +4,7 @@
 'require fs';
 'require ui';
 'require poll';
+'require uci';
 
 var runner = '/usr/libexec/podkop-config-auto-updater/run';
 var softwareRunner = '/usr/libexec/podkop-config-auto-updater/software';
@@ -31,6 +32,8 @@ var errors = {
 	download_http_error: 'Сервер вернул неожиданный HTTP-ответ вместо файла конфига. Проверьте ссылку.',
 	invalid_json: 'Файл скачан, но содержит некорректный JSON или незакрытый комментарий.',
 	invalid_size: 'Скачанный файл пуст или превышает допустимый размер 1 МиБ.',
+	invalid_ignored_options: 'Повреждён локальный список параметров, запрещённых к применению. Пересохраните галочки применения настроек.',
+	protected_option_required: 'Для применения списка требуется изменить защищённый тип списка или подключения. Разрешите применение соответствующего параметра либо заранее настройте его в Podkop.',
 	runtime_incompatible: 'Обработчик теста не запустился: ошибка компиляции ucode. Обновите Podkop config auto updater до совместимой версии.',
 	worker_failed: 'Обработчик теста завершился без результата. Выполните в SSH: /usr/libexec/podkop-config-auto-updater/run test.',
 	rpc_access_denied: 'LuCI отказал в запуске теста. Выйдите из LuCI и войдите снова, чтобы обновить права сессии.',
@@ -71,6 +74,7 @@ function showTestResult(result, successful) {
 		content.push(E('p', {}, errors[result.error] || (result.parsed ?
 			'Проверьте файл по инструкции о формате конфига.' : 'Не удалось выполнить тест. Проверьте доступ к роутеру и повторите попытку.')));
 	content.push(E('p', {}, 'Настройки Podkop не изменялись.'));
+	if (successful) content.push(E('p', {}, 'Список параметров конфига прочитан. Обновите страницу, чтобы увидеть галочки для новых параметров.'));
 	content.push(E('div', {class: 'right'}, E('button', {class: 'cbi-button', type: 'button', click: ui.hideModal}, 'Закрыть')));
 	ui.showModal('Тест соединения', content);
 }
@@ -132,7 +136,7 @@ function statusText(status) {
 
 return view.extend({
 	load: function() {
-		return Promise.all([readStatus(), readSoftwareStatus()]).then(function(results) {
+		return Promise.all([readStatus(), readSoftwareStatus(), uci.load('podkop_config_auto_updater')]).then(function(results) {
 			results[0].software = results[1];
 			return results[0];
 		});
@@ -179,6 +183,58 @@ return view.extend({
 		option.rmempty = false;
 		option.description = 'Для закрытого репозитория нужен токен с правом Contents: Read-only. ' +
 			'<a href="https://github.com/hayOfLife/podkop-config-auto-updater/blob/main/docs/github-setup.ru.md" target="_blank" rel="noopener noreferrer">Как создать закрытый репозиторий и получить токен</a>';
+
+		var labels = {
+			'main.urltest_proxy_links': 'Ссылки прокси для URLTest',
+			'main.user_domains': 'Список пользовательских доменов',
+			'main.user_subnets': 'Список пользовательских подсетей',
+			'main.connection_type': 'Тип подключения',
+			'main.proxy_config_type': 'Тип конфигурации прокси',
+			'main.enable_udp_over_tcp': 'UDP через TCP',
+			'main.urltest_check_interval': 'Интервал проверки URLTest',
+			'main.urltest_tolerance': 'Допуск URLTest',
+			'main.urltest_testing_url': 'URLTest ссылка для проверки',
+			'main.urltest_download_check': 'Проверка загрузки URLTest',
+			'main.user_domain_list_type': 'Тип списка пользовательских доменов',
+			'main.user_subnet_list_type': 'Тип списка пользовательских подсетей',
+			'main.resolve_real_ip_for_routing': 'Определять реальный IP для маршрутизации',
+			'main.community_lists': 'Списки сообщества',
+			'main.remote_domain_lists': 'Удалённые списки доменов',
+			'main.remote_subnet_lists': 'Удалённые списки подсетей',
+			'settings.dns_type': 'Тип протокола DNS',
+			'settings.dns_server': 'DNS-сервер',
+			'settings.bootstrap_dns_server': 'Bootstrap DNS-сервер',
+			'settings.download_lists_via_proxy': 'Скачивать списки через Proxy/VPN',
+			'settings.update_interval': 'Частота обновления списков',
+			'settings.download_lists_via_proxy_section': 'Скачивать списки через выбранную секцию'
+		};
+		function ignoredOptions(sectionId) {
+			var value = uci.get('podkop_config_auto_updater', sectionId, 'ignored_options');
+			return (Array.isArray(value) ? value.slice() : (value ? [value] : [])).map(function(field) {
+				return field === 'main.user_domains_text' ? 'main.user_domains' :
+					(field === 'main.user_subnets_text' ? 'main.user_subnets' : field);
+			});
+		}
+		var discovered = Array.isArray(status.fields) ? status.fields : [];
+		var fields = Array.from(new Set(Object.keys(labels).concat(discovered, ignoredOptions('main'))))
+			.filter(function(field) { return /^(main|settings)\.[a-z][a-z0-9_]{0,63}$/.test(field); });
+		var heading = section.option(form.DummyValue, '_apply_heading', 'Какие настройки применять из конфига');
+		heading.cfgvalue = function() {
+			return 'Все галочки включены по умолчанию. Выключенная галочка сохраняет локальное значение: добавления, замены и удаления этого параметра пропускаются. Отсутствующий в файле параметр ничего не меняет. Новые параметры появятся после успешного теста и обновления страницы.';
+		};
+		fields.forEach(function(field) {
+			var control = section.option(form.Flag, '_apply_' + field.replace('.', '_'), labels[field] || field);
+			control.default = '1';
+			control.rmempty = false;
+			control.cfgvalue = function(sectionId) { return ignoredOptions(sectionId).indexOf(field) < 0 ? '1' : '0'; };
+			control.write = function(sectionId, value) {
+				var ignored = ignoredOptions(sectionId).filter(function(item) { return item !== field; });
+				if (value === '0') ignored.push(field);
+				if (ignored.length) uci.set('podkop_config_auto_updater', sectionId, 'ignored_options', ignored);
+				else uci.unset('podkop_config_auto_updater', sectionId, 'ignored_options');
+			};
+			control.remove = function(sectionId) { this.write(sectionId, '1'); };
+		});
 
 		var statusNode = E('p', {role: 'status'}, statusText(status));
 		var button = E('button', {class: 'cbi-button cbi-button-action', type: 'button',

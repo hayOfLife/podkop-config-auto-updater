@@ -168,6 +168,18 @@ esac
         assert not list((root / 'tmp/podkop-config-auto-updater').glob('run.*'))
         checks += 1
 
+    reset()
+    write('/etc/init.d/podkop', '#!/bin/sh\nexit 0\n', True)
+    updater = root / 'etc/config/podkop_config_auto_updater'
+    updater.write_text(updater.read_text() + " list ignored_options 'main.user_domains'\n")
+    before_podkop = (root / 'etc/config/podkop').read_bytes()
+    code, report = command('run', 'update')
+    assert code == 0 and report['state'] == 'unchanged', report
+    assert (root / 'etc/config/podkop').read_bytes() == before_podkop
+    metadata = json.loads((root / 'tmp/podkop-config-auto-updater/fields.json').read_text())
+    assert metadata == {'fields': ['main.user_domains']}
+    checks += 1
+
     for curl_exit, http_code, expected in [
         (5, '000', 'download_proxy_dns_failed'), (6, '000', 'download_dns_failed'),
         (7, '000', 'download_connect_failed'), (28, '000', 'download_timeout'),

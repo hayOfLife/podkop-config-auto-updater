@@ -15,8 +15,9 @@ function find(node, label) {
 	if (node?.tag === 'button' && flatten(node) === label) return node;
 	for (const child of node?.children || []) { const match = find(child, label); if (match) return match; }
 }
-async function fixture(exec) {
+async function fixture(exec, initial = {}) {
 	const calls = [], modals = [], timers = new Map(), options = {};
+	const settings = {...initial};
 	const enabledNode = element('span', {}, []);
 	class FormMap {
 		section() { return {option(type, name) { return options[name] = {value() {}}; }}; }
@@ -28,13 +29,16 @@ async function fixture(exec) {
 	}
 	const view = vm.runInNewContext('(function() {\n' + source + '\n})()', {
 		E: element, view: {extend: value => value}, form: {Map: FormMap},
+		uci: {load: () => Promise.resolve(), get: (config, section, key) => settings[key],
+			set: (config, section, key, value) => { settings[key] = value; },
+			unset: (config, section, key) => { delete settings[key]; }},
 		fs: {exec(path, args) { calls.push([path, [...args]]); return exec(path, args); }},
 		ui: {createHandlerFn: (owner, handler) => handler.bind(owner), hideModal() {},
 			showModal(title, content) { modals.push(content.map(flatten).join(' ')); }},
 		poll: {add(fn, interval) { timers.set(fn, interval); }, remove(fn) { timers.delete(fn); }}
 	});
-	const tree = await view.render({enabled: true, software: {state: 'idle'}});
-	return {tree, calls, modals, timers, options, enabledNode};
+	const tree = await view.render({enabled: true, software: {state: 'idle'}, fields: ['main.future_option', 'settings.dns_server']});
+	return {tree, calls, modals, timers, options, enabledNode, settings};
 }
 
 for (const report of [
@@ -112,4 +116,16 @@ for (const [error, expected] of [
 	assert.match(app.modals.at(-1), expected);
 	checks++;
 }
-console.log(`LuCI actions: ${checks} command routing, popup and background completion scenarios passed`);
+const selection = await fixture(() => Promise.resolve({}), {ignored_options: ['settings.dns_server']});
+assert.equal(selection.options._apply_main_user_domains.cfgvalue('main'), '1');
+assert.equal(selection.options._apply_main_future_option.cfgvalue('main'), '1');
+assert.equal(selection.options._apply_settings_dns_server.cfgvalue('main'), '0');
+selection.options._apply_main_user_domains.write('main', '0');
+assert.deepEqual([...selection.settings.ignored_options], ['settings.dns_server', 'main.user_domains']);
+selection.options._apply_settings_dns_server.write('main', '1');
+assert.deepEqual([...selection.settings.ignored_options], ['main.user_domains']);
+selection.options._apply_main_user_domains.write('main', '1');
+assert.equal(selection.settings.ignored_options, undefined);
+assert.equal(selection.calls.length, 0);
+checks++;
+console.log(`LuCI actions: ${checks} command routing, popup, selection and background completion scenarios passed`);

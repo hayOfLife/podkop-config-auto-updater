@@ -1,4 +1,4 @@
-import { parseConfig, validateConfig, mergeConfig } from 'config';
+import { parseConfig, validateConfig, selectConfig, configFields, mergeConfig } from 'config';
 import { readfile } from 'fs';
 let passed = 0;
 function check(value, label) { if (!value) die(label); passed++; }
@@ -46,4 +46,24 @@ let example = validateConfig(json(readfile('examples/main.json')));
 let demo = mergeConfig({}, {}, example, true);
 check(length(demo.patches.main.urltest_proxy_links) == 1, 'synthetic example produces one demonstration proxy');
 check(demo.patches.settings.dns_type == 'doh', 'synthetic example settings use supported format');
+let ignored = ['main.user_domains', 'settings.dns_server', 'main.future_option'];
+let chosen = selectConfig(input, ignored);
+let limited = mergeConfig({}, { dns_server: '192.0.2.8' }, chosen, true, ignored);
+check(!exists(limited.patches.main, 'user_domains_text') && !exists(limited.patches.settings, 'dns_server'), 'disabled lists and scalar do not apply');
+check(!exists(limited.patches.main, 'future_option') && limited.patches.settings.dns_type == 'doh', 'independent fields continue applying');
+check(index(configFields(input), 'main.future_option') >= 0, 'discover future fields without values');
+let textInput = { schema_version: 2, revision: 'text-1', main: { user_domains_text: 'example.com' }, settings: {} };
+check(!length(selectConfig(textInput, ['main.user_domains']).lists.user_domains), 'list checkbox covers text alias');
+check(configFields(textInput)[0] == 'main.user_domains', 'text alias displayed as one checkbox');
+let ignoredDelete = selectConfig({ schema_version: 2, revision: 'delete-2', main: {
+	user_domains: [{value: 'example.com', delete: true}] }, settings: {} }, ['main.user_domains']);
+let preserved = mergeConfig({ user_domain_list_type: 'text', user_domains_text: 'example.com' }, {}, ignoredDelete, true, ['main.user_domains']);
+check(!length(keys(preserved.patches.main)), 'disabled field also skips deletion');
+let required = selectConfig(textInput, ['main.user_domain_list_type']);
+rejects(() => mergeConfig({user_domain_list_type: 'disabled'}, {}, required, true, ['main.user_domain_list_type']), 'cannot implicitly enable protected list');
+check(mergeConfig({user_domain_list_type: 'text'}, {}, required, true, ['main.user_domain_list_type']).patches.main.user_domains_text == 'example.com', 'existing enabled list can be filled without changing its protected type');
+rejects(() => selectConfig({...input, settings: {dns_type: 'invalid'}}, ['settings.dns_type']), 'disabled fields still undergo validation');
+rejects(() => selectConfig(input, ['settings.dns_server\ninjected']), 'invalid local selector rejected');
+let legacy = { schema_version: 1, section: 'main', revision: 'legacy', urltest_proxy_links: [], user_domains: ['example.com'], user_subnets: [] };
+check(!length(selectConfig(legacy, ['main.user_domains']).lists.user_domains), 'legacy feeds respect local selection');
 printf('config: %d checks passed\n', passed);

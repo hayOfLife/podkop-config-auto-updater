@@ -36,6 +36,20 @@ export function parseConfig(text) {
 	return json(join('', chunks));
 };
 
+function canonicalField(field) {
+	if (field == 'main.user_domains_text') return 'main.user_domains';
+	if (field == 'main.user_subnets_text') return 'main.user_subnets';
+	return field;
+}
+
+export function configFields(input) {
+	if (input.schema_version === 1) return map(listFields, key => 'main.' + key);
+	let fields = [];
+	for (let group in ['main', 'settings'])
+		for (let key in keys(input[group])) push(fields, canonicalField(group + '.' + key));
+	return fields;
+};
+
 function operation(value) {
 	let remove = false;
 	if (type(value) == 'object') {
@@ -100,6 +114,29 @@ export function validateConfig(input) {
 	return result;
 };
 
+export function selectConfig(input, ignored) {
+	// Проверяем весь файл, даже когда локальная настройка запрещает применять часть полей
+	validateConfig(input);
+	if (type(ignored) != 'array') die('invalid_ignored_options');
+	for (let field in ignored)
+		if (type(field) != 'string' || !match(field, /^(main|settings)\.[a-z][a-z0-9_]{0,63}$/) || match(field, /[[:space:][:cntrl:]]/))
+			die('invalid_ignored_options');
+	ignored = map(ignored, canonicalField);
+	let selected = { ...input };
+	if (input.schema_version === 1) {
+		for (let key in listFields)
+			if (index(ignored, 'main.' + key) >= 0) selected[key] = [];
+	}
+	else {
+		for (let group in ['main', 'settings']) {
+			selected[group] = {};
+			for (let key, value in input[group])
+				if (index(ignored, canonicalField(group + '.' + key)) < 0) selected[group][key] = value;
+		}
+	}
+	return validateConfig(selected);
+};
+
 function mergeOptions(current, operations, allowDeletes) {
 	let patch = {};
 	let counts = { added: 0, removed: 0, pending: 0 };
@@ -129,10 +166,20 @@ function mergeOptions(current, operations, allowDeletes) {
 	return { patch, counts };
 }
 
-export function mergeConfig(main, settings, feed, allowDeletes) {
+export function mergeConfig(main, settings, feed, allowDeletes, ignored) {
 	let lists = core.mergeSection(main, feed.lists, allowDeletes);
 	let extra = mergeOptions(main, feed.main, allowDeletes);
 	let global = mergeOptions(settings, feed.settings, allowDeletes);
-	return { patches: { main: { ...lists.patch, ...extra.patch }, settings: global.patch },
+	let patches = { main: { ...lists.patch, ...extra.patch }, settings: global.patch };
+	// Не меняем защищённые параметры неявно при включении списка или переходе на URLTest
+	for (let field in ignored || []) {
+		let parts = split(canonicalField(field), '.');
+		let group = parts[0], key = parts[1];
+		if (!exists(patches[group], key)) continue;
+		let current = group == 'main' ? main : settings;
+		if (sprintf('%J', patches[group][key]) != sprintf('%J', current[key])) die('protected_option_required');
+		delete patches[group][key];
+	}
+	return { patches,
 		counts: { ...lists.counts, main_options: extra.counts, settings: global.counts } };
 };

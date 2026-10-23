@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
 import * as core from 'core';
-import { parseConfig, validateConfig, mergeConfig } from 'config';
+import { parseConfig, selectConfig, configFields, mergeConfig } from 'config';
 import { sourceRequest } from 'source';
 import { applyPatch, atomicWrite, writePrivate } from 'transaction';
 
@@ -11,6 +11,8 @@ const helper = '/usr/libexec/podkop-config-auto-updater/io';
 const work = ARGV[1];
 const testing = ARGV[0] == 'test';
 let config = cursor().get_all('podkop_config_auto_updater', 'main') || {};
+let ignored = config.ignored_options || [];
+if (type(ignored) == 'string') ignored = [ignored];
 let progress = { downloaded: false, parsed: false, valid: false };
 let schedule;
 if (!testing) {
@@ -63,8 +65,9 @@ function fetchFeed() {
 	try { parsed = parseConfig(data); } catch (e) { die('invalid_json'); }
 	progress.parsed = true;
 
-	let feed = validateConfig(parsed);
+	let feed = selectConfig(parsed, ignored);
 	progress.valid = true;
+	atomicWrite('/tmp/podkop-config-auto-updater/fields.json', sprintf('%J', { fields: configFields(parsed) }));
 	return feed;
 }
 
@@ -78,7 +81,7 @@ function update() {
 	let podkop = cursor();
 	if (!podkop.load('podkop')) die('invalid_podkop');
 	let section = podkop.get_all('podkop', 'main') || {};
-	let merged = mergeConfig(section, podkop.get_all('podkop', 'settings') || {}, feed, config.allow_deletes == '1');
+	let merged = mergeConfig(section, podkop.get_all('podkop', 'settings') || {}, feed, config.allow_deletes == '1', ignored);
 	let changed = applyPatch({ work, config: '/etc/config/podkop', backup: '/etc/podkop-config-auto-updater/previous-podkop' },
 		merged.patches, original, pending, () => system([helper, 'restart'], 180000) == 0);
 	status({ state: changed ? 'applied' : 'unchanged', revision: feed.revision, counts: merged.counts });
