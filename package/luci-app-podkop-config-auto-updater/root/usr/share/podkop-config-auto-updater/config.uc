@@ -66,7 +66,7 @@ export function validateConfig(input) {
 	}
 	result.lists = core.validateFeed(lists);
 	return result;
-}
+};
 
 function mergeOptions(current, operations, allowDeletes) {
 	let patch = {};
@@ -103,4 +103,4 @@ export function mergeConfig(main, settings, feed, allowDeletes) {
 	let global = mergeOptions(settings, feed.settings, allowDeletes);
 	return { patches: { main: { ...lists.patch, ...extra.patch }, settings: global.patch },
 		counts: { ...lists.counts, main_options: extra.counts, settings: global.counts } };
-}
+};

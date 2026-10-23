@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
-tools_dir="${RUNNER_TEMP:-/tmp}/podkop-config-auto-updater-tools"
+series="${1:-25.12}"
+case "$series" in
+	24.10) ucode_revision=3f64c8089bf3ea4847c96b91df09fbfcaec19e1d ;;
+	25.12) ucode_revision=85922056ef7abeace3cca3ab28bc1ac2d88e31b1 ;;
+	*) printf 'Unsupported OpenWrt test series: %s\n' "$series" >&2; exit 2 ;;
+esac
+tools_dir="${RUNNER_TEMP:-/tmp}/podkop-config-auto-updater-tools-$series"
 mkdir -p "$tools_dir"
 build_source() {
 	name="$1"; url="$2"; revision="$3"; shift 3
@@ -13,7 +19,7 @@ build_source() {
 }
 build_source libubox https://github.com/openwrt/libubox.git da2d205a5cf3e877c45a2eec488218cbaf452e7d -DBUILD_LUA=OFF -DBUILD_EXAMPLES=OFF
 build_source uci https://github.com/openwrt/uci.git 74f6277aabffc943d026f406df57c22595134c42 -DBUILD_LUA=OFF
-build_source ucode https://github.com/jow-/ucode.git 4a28662538275b67a0bcf11de25c365c1ec7a99d -DUBUS_SUPPORT=OFF -DULOOP_SUPPORT=OFF -DUCI_SUPPORT=ON
+build_source ucode https://github.com/jow-/ucode.git "$ucode_revision" -DUBUS_SUPPORT=OFF -DULOOP_SUPPORT=OFF -DUCI_SUPPORT=ON
 export LD_LIBRARY_PATH="$tools_dir/install/lib"
 export PATH="$tools_dir/install/bin:$PATH"
 sh -n install.sh

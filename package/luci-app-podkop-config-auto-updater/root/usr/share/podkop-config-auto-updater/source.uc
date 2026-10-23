@@ -14,4 +14,4 @@ export function sourceRequest(url, token) {
 	}
 	else if (length(token || '')) die('token_host_mismatch');
 	return { url, headers };
-}
+};

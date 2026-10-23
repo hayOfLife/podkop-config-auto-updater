@@ -34,7 +34,7 @@ export function normalize(kind, value) {
 		bytes[i] &= (255 << (8 - bits)) & 255;
 	}
 	return arrtoip(bytes) + '/' + prefix;
-}
+};
 
 export function validateFeed(feed) {
 	if (type(feed) != 'object' || feed.schema_version !== 1 || feed.section !== 'main' ||
@@ -71,11 +71,11 @@ export function validateFeed(feed) {
 		}
 	}
 	return result;
-}
+};
 
 export function tokens(text) {
 	return filter(split(replace(text || '', /\/\/[^\n]*/g, ''), /[[:space:],]+/), v => length(v));
-}
+};
 
 function storedKey(kind, value) {
 	try { return normalize(kind, value); }
@@ -108,7 +108,7 @@ export function mergeList(kind, oldValues, operations, allowDeletes) {
 		added++;
 	}
 	return { values, added, removed, pending };
-}
+};
 
 export function mergeSection(section, feed, allowDeletes) {
 	let patch = {};
@@ -157,7 +157,7 @@ export function mergeSection(section, feed, allowDeletes) {
 		}
 	}
 	return { patch, counts };
-}
+};
 
 export function nextRun(now, days, minute) {
 	let date = localtime(now);
@@ -167,7 +167,7 @@ export function nextRun(now, days, minute) {
 	date.isdst = -1;
 	date.mday += days;
 	return timelocal(date);
-}
+};
 
 export function planSchedule(now, previous, interval, timezone, minute) {
 	if (index([1, 3, 7, 30], interval) < 0) die('invalid_interval');
@@ -180,4 +180,4 @@ export function planSchedule(now, previous, interval, timezone, minute) {
 	let due = date.hour == 3 && date.min <= 30;
 	let next = due ? nextRun(now, interval, minute) : nextRun(now, date.hour < 3 ? 0 : 1, minute);
 	return { state: { next, interval, timezone }, due, changed: true };
-}
+};

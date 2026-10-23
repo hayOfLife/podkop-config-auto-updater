@@ -6,20 +6,25 @@ import vm from 'node:vm';
 const source = readFileSync('package/luci-app-podkop-config-auto-updater/htdocs/luci-static/resources/view/podkop_config_auto_updater/main.js', 'utf8');
 let checks = 0;
 function element(tag, attributes, children) {
-	return {tag, attributes, children: Array.isArray(children) ? children : [children]};
+	return {tag, attributes, style: {}, children: Array.isArray(children) ? children : [children]};
 }
 function flatten(node) {
-	return typeof node === 'string' ? node : (node?.children || []).map(flatten).join(' ');
+	return typeof node === 'string' ? node : (node?.textContent ?? (node?.children || []).map(flatten).join(' '));
 }
 function find(node, label) {
 	if (node?.tag === 'button' && flatten(node) === label) return node;
 	for (const child of node?.children || []) { const match = find(child, label); if (match) return match; }
 }
 async function fixture(exec) {
-	const calls = [], modals = [], timers = new Map();
+	const calls = [], modals = [], timers = new Map(), options = {};
+	const enabledNode = element('span', {}, []);
 	class FormMap {
-		section() { return {option() { return {value() {}}; }}; }
-		render() { return Promise.resolve(element('form', {}, [])); }
+		section() { return {option(type, name) { return options[name] = {value() {}}; }}; }
+		render() {
+			const form = element('form', {}, Object.values(options).map(option => option.description));
+			form.querySelector = selector => selector === '#podkop-updater-enabled' ? enabledNode : null;
+			return Promise.resolve(form);
+		}
 	}
 	const view = vm.runInNewContext('(function() {\n' + source + '\n})()', {
 		E: element, view: {extend: value => value}, form: {Map: FormMap},
@@ -29,7 +34,7 @@ async function fixture(exec) {
 		poll: {add(fn, interval) { timers.set(fn, interval); }, remove(fn) { timers.delete(fn); }}
 	});
 	const tree = await view.render({enabled: true, software: {state: 'idle'}});
-	return {tree, calls, modals, timers};
+	return {tree, calls, modals, timers, options, enabledNode};
 }
 
 for (const report of [
@@ -71,4 +76,28 @@ for (const [label, target] of [['Обновить подкоп', 'podkop'], ['О
 	assert.equal(app.timers.has(timer), false);
 	checks++;
 }
+
+for (const [result, expected] of [
+	[{code: 1, stdout: '', stderr: "Syntax error: Unable to compile module demo_secret"}, /ошибка компиляции ucode/],
+	[{code: 1, stdout: '', stderr: 'demo_secret'}, /завершился без результата/],
+	[new Error('RPC Access denied demo_secret'), /LuCI отказал/],
+	[new Error('Request timed out demo_secret'), /LuCI не дождался/]
+]) {
+	const app = await fixture(() => result instanceof Error ? Promise.reject(result) : Promise.resolve(result));
+	await find(app.tree, 'Тест соединения').attributes.click();
+	assert.match(app.modals.at(-1), expected);
+	assert.doesNotMatch(app.modals.at(-1), /demo_secret/);
+	checks++;
+}
+
+const statusApp = await fixture(() => Promise.resolve({stdout: JSON.stringify({enabled: false})}));
+assert.match(statusApp.options.enabled.description, /id="podkop-updater-enabled"/);
+assert.equal(statusApp.enabledNode.textContent, 'Программа "Podkop config auto updater" работает');
+assert.equal(statusApp.enabledNode.style.color, '#22863a');
+const statusTimer = [...statusApp.timers.entries()].find(([, interval]) => interval === 30)[0];
+await statusTimer();
+assert.equal(statusApp.enabledNode.textContent, 'Программа "Podkop config auto updater" выключена');
+assert.equal(statusApp.enabledNode.style.color, '#b94a48');
+assert.match(statusApp.options.github_token.description, /<a href="https:\/\/github.com/);
+checks++;
 console.log(`LuCI actions: ${checks} command routing, popup and background completion scenarios passed`);

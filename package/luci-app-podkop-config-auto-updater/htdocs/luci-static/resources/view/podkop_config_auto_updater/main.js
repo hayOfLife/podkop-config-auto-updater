@@ -16,6 +16,11 @@ var errors = {
 	download_failed: 'Файл не загружен. Проверьте ссылку, срок действия токена и доступ к репозиторию.',
 	invalid_json: 'Файл скачан, но содержит некорректный JSON.',
 	invalid_size: 'Скачанный файл пуст или превышает допустимый размер 1 МиБ.',
+	runtime_incompatible: 'Обработчик теста не запустился: ошибка компиляции ucode. Обновите Podkop config auto updater до совместимой версии.',
+	worker_failed: 'Обработчик теста завершился без результата. Выполните в SSH: /usr/libexec/podkop-config-auto-updater/run test.',
+	rpc_access_denied: 'LuCI отказал в запуске теста. Выйдите из LuCI и войдите снова, чтобы обновить права сессии.',
+	rpc_timeout: 'LuCI не дождался результата теста. Проверьте источник командой в SSH: /usr/libexec/podkop-config-auto-updater/run test.',
+	rpc_unavailable: 'Не удалось связаться с обработчиком LuCI. Обновите страницу и повторите тест.',
 	pending_changes: 'В Podkop есть несохранённые изменения. Сохраните или отмените их и повторите обновление.',
 	concurrent_change: 'Настройки Podkop изменились во время обновления. Повторите обновление.',
 	empty_proxy_pool: 'Удаление оставило бы секцию без серверов. Настройки сохранены без изменений.',
@@ -34,6 +39,7 @@ var errors = {
 	checksum_mismatch: 'Контрольная сумма скачанного пакета не совпала. Установка не запускалась.',
 	backup_failed: 'Не удалось сохранить резервную копию настроек. Установка не запускалась.',
 	package_index_failed: 'Не удалось обновить список доступных пакетов OpenWrt. Установка не запускалась.',
+	package_compare_failed: 'Не удалось сравнить версии пакетов. Установка не запускалась.',
 	package_install_failed: 'Пакетный менеджер сообщил об ошибке. Проверьте состояние пакетов на роутере; резервная копия настроек сохранена.',
 	installed_version_mismatch: 'Установленная версия отличается от ожидаемой. Проверьте состояние пакетов на роутере.',
 	interrupted: 'Обновление прервалось. Проверьте установленные версии перед повторной попыткой.'
@@ -70,10 +76,12 @@ function readSoftwareStatus() {
 
 function softwareText(status) {
 	var name = status.target === 'podkop' ? 'Podkop' : 'Podkop config auto updater';
+	var versions = status.installed_version && status.available_version ?
+		' Установлена: ' + status.installed_version + '; доступна: ' + status.available_version + '.' : '';
 	var stages = {checking: 'проверка версии', downloading: 'скачивание пакетов', index: 'подготовка установки', installing: 'установка пакетов'};
 	if (status.state === 'running') return name + ': ' + (stages[status.stage] || 'обновление выполняется') + '.';
 	if (status.state === 'updated') return name + ' обновлён.' + (status.config_changed ? ' Установщик изменил настройки; проверьте их. Резервная копия сохранена.' : '');
-	if (status.state === 'up_to_date') return name + ': обновлений нет.';
+	if (status.state === 'up_to_date') return name + ': обновлений нет.' + versions;
 	if (status.state === 'error') return errors[status.error] || 'Обновить программу не удалось. Проверьте состояние пакетов на роутере.';
 	if (status.state === 'unavailable') return 'Связь с роутером временно недоступна. Проверка результата продолжится.';
 	return 'Обновление программ ещё не запускалось.';
@@ -87,7 +95,7 @@ function showSoftwareResult(status) {
 }
 
 function statusText(status) {
-	var text = status.enabled ? 'Работает.' : 'Автоматическое обновление выключено.';
+	var text = '';
 	if (status.next_run && status.enabled)
 		text += ' Следующее обновление: ' + new Date(status.next_run * 1000).toLocaleString() + ' (время вашего браузера).';
 	if (status.state === 'applied') text += ' Последние изменения применены.';
@@ -122,6 +130,13 @@ return view.extend({
 		var option = section.option(form.Flag, 'enabled', 'Работать');
 		option.default = '1';
 		option.rmempty = false;
+		var enabledNode;
+		function refreshEnabled(current) {
+			if (!enabledNode) return;
+			enabledNode.textContent = current.enabled ? 'Программа "Podkop config auto updater" работает' : 'Программа "Podkop config auto updater" выключена';
+			enabledNode.style.color = current.enabled ? '#22863a' : '#b94a48';
+		}
+		option.description = '<span id="podkop-updater-enabled" role="status"></span>';
 		option = section.option(form.ListValue, 'interval_days', 'Обновлять раз в:');
 		option.value('1', 'День');
 		option.value('3', '3 дня');
@@ -147,13 +162,8 @@ return view.extend({
 		option = section.option(form.Value, 'github_token', 'Токен GitHub');
 		option.password = true;
 		option.rmempty = false;
-		option.description = E('span', {}, [
-			'Для закрытого репозитория нужен токен с правом Contents: Read-only. ',
-			E('a', {
-				href: 'https://github.com/hayOfLife/podkop-config-auto-updater/blob/main/docs/github-setup.ru.md',
-				target: '_blank', rel: 'noopener noreferrer'
-			}, 'Как создать закрытый репозиторий и получить токен')
-		]);
+		option.description = 'Для закрытого репозитория нужен токен с правом Contents: Read-only. ' +
+			'<a href="https://github.com/hayOfLife/podkop-config-auto-updater/blob/main/docs/github-setup.ru.md" target="_blank" rel="noopener noreferrer">Как создать закрытый репозиторий и получить токен</a>';
 
 		var statusNode = E('p', {role: 'status'}, statusText(status));
 		var button = E('button', {class: 'cbi-button cbi-button-action', type: 'button',
@@ -170,10 +180,16 @@ return view.extend({
 				return fs.exec(runner, ['test']).then(function(result) {
 					var report;
 					try { report = JSON.parse(result.stdout || '{}'); }
-					catch (error) { report = {}; }
-					if (!report || typeof report !== 'object') report = {};
+					catch (error) { report = null; }
+					if (!report || typeof report !== 'object' || !report.state) {
+						report = {error: /Syntax error|Unable to compile module/.test(result.stderr || '') ? 'runtime_incompatible' : 'worker_failed'};
+					}
 					showTestResult(report, result.code === 0 && report.state === 'tested' && report.valid === true);
-				}).catch(function() { showTestResult({}, false); });
+				}).catch(function(error) {
+					var message = error.message || '';
+					showTestResult({error: /Access denied|Permission denied/i.test(message) ? 'rpc_access_denied' :
+						(/timeout|timed out/i.test(message) ? 'rpc_timeout' : 'rpc_unavailable')}, false);
+				});
 			})}, 'Тест соединения');
 		var softwareStatus = status.software || {state: 'idle'};
 		var softwareNode = E('p', {role: 'status'}, softwareText(softwareStatus));
@@ -208,8 +224,13 @@ return view.extend({
 		var selfButton = E('button', {class: 'cbi-button cbi-button-action', type: 'button',
 			click: ui.createHandlerFn(this, function() { return startSoftware('self'); })}, 'Обновить себя');
 		if (softwareActive) poll.add(refreshSoftware, 3);
-		poll.add(function() { return readStatus().then(function(current) { statusNode.textContent = statusText(current); }); }, 30);
+		poll.add(function() { return readStatus().then(function(current) {
+			statusNode.textContent = statusText(current);
+			refreshEnabled(current);
+		}); }, 30);
 		return map.render().then(function(formNode) {
+			enabledNode = formNode.querySelector('#podkop-updater-enabled');
+			refreshEnabled(status);
 			return E('div', {}, [formNode, statusNode, E('div', {class: 'cbi-page-actions'}, [testButton, ' ', button]),
 				E('p', {class: 'cbi-section-descr'}, 'Обе кнопки используют сохранённые настройки. После изменения полей нажмите «Сохранить и применить». Тест соединения только скачивает и проверяет файл.'),
 				E('h3', {}, 'Обновление программ'), softwareNode,

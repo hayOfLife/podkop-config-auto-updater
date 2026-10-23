@@ -7,13 +7,18 @@ const statusPath = '/tmp/podkop-config-auto-updater/software.json';
 const repository = target == 'self' ? 'hayOfLife/podkop-config-auto-updater' : 'itdoginfo/podkop';
 let stage = 'checking';
 let releaseVersion;
+let installedVersion;
+let availableVersion;
 
 function writePrivate(path, data) {
 	if (fs.writefile(path, data) !== length(data) || !fs.chmod(path, 0600)) die('write_failed');
 }
 
 function status(state, extra) {
-	writePrivate(statusPath + '.new', sprintf('%J', { state, target, stage, version: releaseVersion, ...extra }));
+	writePrivate(statusPath + '.new', sprintf('%J', {
+		state, target, stage, version: releaseVersion,
+		installed_version: installedVersion, available_version: availableVersion, ...extra
+	}));
 	if (!fs.rename(statusPath + '.new', statusPath)) die('write_failed');
 }
 
@@ -26,6 +31,12 @@ function version(name) {
 	let value = trim(fs.readfile(work + '/version') || '');
 	if (value && (!match(value, /^v?[0-9]+\.[0-9]+\.[0-9]+(-r[0-9]+)?$/) || match(value, /[[:space:][:cntrl:]]/))) die('invalid_installed_version');
 	return value;
+}
+
+function newer(candidate, current) {
+	let result = run(['newer', replace(candidate, /^v/, ''), replace(current, /^v/, '')]);
+	if (result != 0 && result != 1) die('package_compare_failed');
+	return result == 0;
 }
 
 function pending() {
@@ -59,6 +70,7 @@ try {
 	let names = target == 'self' ? ['luci-app-podkop-config-auto-updater'] : ['podkop', 'luci-app-podkop'];
 	let installed = {};
 	for (let name in names) installed[name] = version(name);
+	installedVersion = installed[names[0]];
 	if (target == 'podkop') {
 		if (!installed.podkop) die('podkop_missing');
 		let parts = split(replace(installed.podkop, /^v/, ''), '.');
@@ -93,7 +105,12 @@ try {
 		let expected = target == 'self' ? releaseVersion + '-r1' :
 			replace(replace(substr(asset.name, length(name) + 1), /\.(ipk|apk)$/, ''), /-all$/, '');
 		let current = installed[name];
-		if (current && run(['newer', replace(expected, /^v/, ''), replace(current, /^v/, '')]) != 0) continue;
+		if (name == names[0]) availableVersion = expected;
+		if (current && !newer(expected, current)) {
+			// Актуальное ядро Podkop исключает установку остальных пакетов из этого релиза
+			if (name == 'podkop') { status('up_to_date', {}); exit(0); }
+			continue;
+		}
 		push(updates, { name, asset, expected, path: work + '/' + asset.name });
 	}
 	if (!length(updates)) { status('up_to_date', {}); exit(0); }
@@ -122,8 +139,11 @@ try {
 	stage = 'installing';
 	status('running', {});
 	if (run(['install', ...map(updates, (update) => update.path)], 900000) != 0) die('package_install_failed');
-	for (let update in updates)
-		if (version(update.name) != update.expected) die('installed_version_mismatch');
+	for (let update in updates) {
+		let current = version(update.name);
+		if (current != update.expected) die('installed_version_mismatch');
+		if (update.name == names[0]) installedVersion = current;
+	}
 	let changed = false;
 	for (let name, text in configs)
 		if (fs.readfile('/etc/config/' + name) != text) changed = true;

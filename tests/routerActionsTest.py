@@ -84,8 +84,11 @@ case "$action" in
   if [ "$kind" = opkg ]; then printf 'Version: %s\\n' "$value";
   else printf '{\\n  "version": "%s"\\n}\\n' "$value"; fi ;;
  compare-versions)
-  [ "$1" != "$3" ] && [ "$3" != 9.9.9-r1 ] ;;
+  [ "${MOCK_COMPARE_FAIL:-0}" = 0 ] || exit 2
+  if [ "$1" = "$3" ]; then comparison='='; elif [ "$3" = 9.9.9-r1 ]; then comparison='<'; else comparison='>'; fi
+  [ "$2" = "$comparison" ] ;;
  version)
+  [ "${MOCK_COMPARE_FAIL:-0}" = 0 ] || exit 2
   if [ "$2" = "$3" ]; then printf '='; elif [ "$3" = 9.9.9-r1 ]; then printf '<'; else printf '>'; fi ;;
  update)
   printf '%s update\\n' "$kind" >> /fixtures/calls
@@ -199,10 +202,29 @@ esac
         assert code == 0 and started['state'] == 'running'
         report = wait_result()
         assert report['state'] == 'updated', (format, target, report)
+        assert report['installed_version'] == report['available_version']
         assert snapshot() == before
         assert (root / f'etc/podkop-config-auto-updater/before-software-{target}/podkop').is_file()
         assert not list((root / 'tmp/podkop-config-auto-updater').glob('software.*??????'))
         checks += 1
+
+    for format in ['ipk', 'apk']:
+        for case in ['equal', 'newer', 'comparison_error']:
+            before = reset(format)
+            prepare_release('podkop', format)
+            installed = ('v' if format == 'ipk' else '') + ('9.9.9-r1' if case == 'newer' else '0.7.24-r1')
+            write('/fixtures/installed/podkop', installed)
+            # Отсутствующий LuCI не должен запускать установку при актуальном ядре Podkop
+            (root / 'fixtures/installed/luci-app-podkop').unlink()
+            command('software', 'podkop', {'MOCK_COMPARE_FAIL': '1' if case == 'comparison_error' else '0'})
+            report = wait_result()
+            assert report['state'] == ('error' if case == 'comparison_error' else 'up_to_date'), (format, case, report)
+            if case == 'comparison_error': assert report['error'] == 'package_compare_failed', report
+            assert report['installed_version'] == installed
+            assert report['available_version'] == ('v' if format == 'ipk' else '') + '0.7.24-r1'
+            assert (root / 'fixtures/calls').read_text() == '', (format, case)
+            assert snapshot() == before
+            checks += 1
 
     for case, expected in [('checksum', 'checksum_mismatch'), ('pending', 'pending_changes'), ('old', 'podkop_migration_required'),
                            ('install', 'package_install_failed'), ('version', 'installed_version_mismatch'),

@@ -9,10 +9,14 @@ jobs:
   tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        series: ['24.10', '25.12']
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get install -y --no-install-recommends -o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 libjson-c-dev
-      - run: sh scripts/testNative.sh
+      - run: sh scripts/testNative.sh '${{ matrix.series }}'
       - run: node scripts/checkSource.mjs
       - run: node tests/actionsUiTest.mjs
       - run: python3 tests/ipv6Test.py

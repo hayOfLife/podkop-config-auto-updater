@@ -3,12 +3,12 @@ import { cursor } from 'uci';
 
 export function writePrivate(path, data) {
 	if (fs.writefile(path, data) !== length(data) || !fs.chmod(path, 0600)) die('write_failed');
-}
+};
 
 export function atomicWrite(path, data) {
 	writePrivate(path + '.new', data);
 	if (!fs.rename(path + '.new', path)) die('write_failed');
-}
+};
 
 export function applyPatch(paths, patches, original, pending, restart) {
 	if (!length(keys(patches.main)) && !length(keys(patches.settings))) return false;
@@ -48,4 +48,4 @@ export function applyPatch(paths, patches, original, pending, restart) {
 	atomicWrite(paths.config, original);
 	if (!restart()) die('rollback_restart_failed');
 	die('restart_failed_restored');
-}
+};
