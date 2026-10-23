@@ -4,6 +4,38 @@ const listFields = ['urltest_proxy_links', 'user_domains', 'user_subnets'];
 const settingsFields = ['dns_type', 'dns_server', 'bootstrap_dns_server', 'download_lists_via_proxy',
 	'update_interval', 'download_lists_via_proxy_section'];
 
+export function parseConfig(text) {
+	let chunks = [], start = 0, quoted = false;
+	for (let i = 0; i < length(text); i++) {
+		let ch = substr(text, i, 1);
+		if (quoted) {
+			if (ch == '\\') i++;
+			else if (ch == '"') quoted = false;
+			continue;
+		}
+		if (ch == '"') { quoted = true; continue; }
+		if (ch != '/') continue;
+		let next = substr(text, i + 1, 1);
+		if (next != '/' && next != '*') continue;
+		push(chunks, substr(text, start, i - start));
+		let end = i + 2;
+		if (next == '/') {
+			while (end < length(text) && substr(text, end, 1) != '\n' && substr(text, end, 1) != '\r') end++;
+		}
+		else {
+			while (end < length(text) && substr(text, end, 2) != '*/') end++;
+			if (end >= length(text)) die('invalid_json');
+			end += 2;
+		}
+		// Пробел не позволяет комментарию склеить два недопустимых JSON-токена
+		push(chunks, ' ');
+		start = end;
+		i = end - 1;
+	}
+	push(chunks, substr(text, start));
+	return json(join('', chunks));
+};
+
 function operation(value) {
 	let remove = false;
 	if (type(value) == 'object') {

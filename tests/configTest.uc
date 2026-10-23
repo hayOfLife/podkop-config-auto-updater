@@ -1,8 +1,18 @@
-import { validateConfig, mergeConfig } from 'config';
+import { parseConfig, validateConfig, mergeConfig } from 'config';
 import { readfile } from 'fs';
 let passed = 0;
 function check(value, label) { if (!value) die(label); passed++; }
 function rejects(fn, label) { let failed = false; try { fn(); } catch (e) { failed = true; } check(failed, label); }
+check(parseConfig('// Заголовок\n{"x": [/* Группа */1, 2]} // Конец').x[1] == 2, 'line and block comments including EOF');
+check(parseConfig('{"url":"https://example.com/a/*b*/", "text":"// keep"}').text == '// keep', 'preserve comment markers inside strings');
+let escaped = { text: 'quote " slash \\ // /* */', url: 'vless://demo@example.com' };
+check(parseConfig(sprintf('%J', escaped)).text == escaped.text, 'preserve escaped quotes and backslashes');
+check(parseConfig('{// heading\r"x":1}').x == 1, 'CR line ending');
+rejects(() => parseConfig('{"x":1/* unfinished}'), 'reject unfinished block comment');
+rejects(() => parseConfig('{"x":1/* gap */2}'), 'comments must not concatenate number tokens');
+rejects(() => parseConfig('{"x":tr/* gap */ue}'), 'comments must not concatenate literal tokens');
+rejects(() => parseConfig('{"x":[1,]}'), 'trailing commas remain invalid');
+rejects(() => parseConfig('{"x":"unterminated // text}'), 'unterminated string remains invalid');
 let input = { schema_version: 2, revision: 'extended-1', main: {
 	urltest_check_interval: '5m', future_option: 'value', community_lists: ['telegram', 'google_play'],
 	user_domains: ['example.com']

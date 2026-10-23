@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
 import * as core from 'core';
-import { validateConfig, mergeConfig } from 'config';
+import { parseConfig, validateConfig, mergeConfig } from 'config';
 import { sourceRequest } from 'source';
 import { applyPatch, atomicWrite, writePrivate } from 'transaction';
 
@@ -60,7 +60,7 @@ function fetchFeed() {
 	let data = fs.readfile(work + '/feed.json');
 	if (!data || length(data) > 1048576) die('invalid_size');
 	let parsed;
-	try { parsed = json(data); } catch (e) { die('invalid_json'); }
+	try { parsed = parseConfig(data); } catch (e) { die('invalid_json'); }
 	progress.parsed = true;
 
 	let feed = validateConfig(parsed);

@@ -29,7 +29,7 @@ var errors = {
 	download_http_server_error: 'Сервер конфига вернул ошибку HTTP 5xx. Повторите тест позднее.',
 	download_http_redirect: 'Ссылка возвращает перенаправление. Укажите прямой HTTPS-адрес файла или ссылку GitHub вида /blob/ветка/файл.',
 	download_http_error: 'Сервер вернул неожиданный HTTP-ответ вместо файла конфига. Проверьте ссылку.',
-	invalid_json: 'Файл скачан, но содержит некорректный JSON.',
+	invalid_json: 'Файл скачан, но содержит некорректный JSON или незакрытый комментарий.',
 	invalid_size: 'Скачанный файл пуст или превышает допустимый размер 1 МиБ.',
 	runtime_incompatible: 'Обработчик теста не запустился: ошибка компиляции ucode. Обновите Podkop config auto updater до совместимой версии.',
 	worker_failed: 'Обработчик теста завершился без результата. Выполните в SSH: /usr/libexec/podkop-config-auto-updater/run test.',

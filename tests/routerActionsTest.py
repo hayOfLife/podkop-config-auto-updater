@@ -142,23 +142,28 @@ esac
         assert result.stdout, (result.returncode, result.stderr)
         return result.returncode, json.loads(result.stdout)
 
-    for case in ['valid', 'network', 'json', 'schema', 'token', 'busy']:
+    for case in ['valid', 'comments', 'unfinished_comment', 'network', 'json', 'schema', 'token', 'busy']:
         before = reset(token='' if case == 'token' else 'demo_token')
         write('/tmp/.uci/podkop', 'pending manual settings')
         if case == 'json': write('/fixtures/feed.json', '{broken JSON')
         if case == 'schema': write('/fixtures/feed.json', '{"schema_version":99}')
+        if case == 'comments':
+            write('/fixtures/feed.json', '// Группа\n' + (root / 'fixtures/feed.json').read_text() + '\n/* Конец */')
+        if case == 'unfinished_comment': write('/fixtures/feed.json', '{/* unfinished')
         lock = None
         if case == 'busy':
             lock = (root / 'tmp/podkop-config-auto-updater/lock').open('w')
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         code, report = command('run', 'test', {'MOCK_DOWNLOAD_FAIL': '1' if case == 'network' else '0'})
         if lock: lock.close()
-        assert code == (0 if case == 'valid' else 1), (case, report)
-        assert report['state'] == ('tested' if case == 'valid' else 'error'), (case, report)
+        valid = case in ['valid', 'comments']
+        assert code == (0 if valid else 1), (case, report)
+        assert report['state'] == ('tested' if valid else 'error'), (case, report)
         if case != 'busy':
-            assert report['downloaded'] == (case in ['valid', 'json', 'schema']), (case, report)
-            assert report['parsed'] == (case in ['valid', 'schema']), (case, report)
-            assert report['valid'] == (case == 'valid'), (case, report)
+            assert report['downloaded'] == (case in ['valid', 'comments', 'unfinished_comment', 'json', 'schema']), (case, report)
+            assert report['parsed'] == (case in ['valid', 'comments', 'schema']), (case, report)
+            assert report['valid'] == valid, (case, report)
+        if case == 'unfinished_comment': assert report['error'] == 'invalid_json'
         assert snapshot() == before, case
         assert not list((root / 'tmp/podkop-config-auto-updater').glob('run.*'))
         checks += 1
