@@ -59,7 +59,7 @@ with (Path(os.environ['CONFIG_UPDATER_TEST_ROOT']) / 'manager.log').open('a') as
         assert ('install ' if manager == 'opkg' else 'add --allow-untrusted ') in operations[1]
         assert operations[1].endswith(asset)
         assert (root / 'etc/config/podkop_config_auto_updater').read_text() == previous
-        assert (root / 'etc/podkop-config-auto-updater/before-install-config').read_text() == previous
+        assert (root / 'tmp/podkop-config-auto-updater/before-install-config').read_text() == previous
         passed += 1
         (root / 'manager.log').unlink()
         (server / asset).write_bytes(b'corrupted')

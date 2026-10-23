@@ -45,9 +45,9 @@ awk -v file="$asset" '$2 == file { print }' "$work/SHA256SUMS" > "$work/expected
 (cd "$work" && sha256sum -c expected) || fail 'Контрольная сумма пакета не совпала.'
 
 if [ -f "$root/etc/config/podkop_config_auto_updater" ]; then
-	mkdir -p "$root/etc/podkop-config-auto-updater"
-	cp "$root/etc/config/podkop_config_auto_updater" "$root/etc/podkop-config-auto-updater/before-install-config"
-	chmod 600 "$root/etc/podkop-config-auto-updater/before-install-config"
+	mkdir -p "$root/tmp/podkop-config-auto-updater"
+	cp "$root/etc/config/podkop_config_auto_updater" "$root/tmp/podkop-config-auto-updater/before-install-config"
+	chmod 600 "$root/tmp/podkop-config-auto-updater/before-install-config"
 fi
 printf 'Установка %s для OpenWrt %s (%s)\n' "$tag" "$series" "$format"
 "$manager" update

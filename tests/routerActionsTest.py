@@ -121,8 +121,8 @@ esac
         write('/etc/openwrt_release', "DISTRIB_RELEASE='" + ('25.12.6' if format == 'apk' else '24.10.7') + "'\n")
         write('/etc/config/podkop_config_auto_updater', "config settings 'main'\n option enabled '0'\n option config_url 'https://github.com/example/config/blob/main/config/main.json'\n option github_token '" + token + "'\n")
         write('/etc/config/podkop', "config section 'main'\n option connection_type 'proxy'\n")
-        write('/etc/podkop-config-auto-updater/schedule.json', '{"next":1900000000}')
-        write('/etc/podkop-config-auto-updater/previous-podkop', 'previous configuration')
+        write('/tmp/podkop-config-auto-updater/schedule.json', '{"next":1900000000}')
+        write('/tmp/podkop-config-auto-updater/previous-podkop', 'previous configuration')
         write('/tmp/podkop-config-auto-updater/status.json', '{"state":"unchanged"}')
         write('/fixtures/feed.json', json.dumps({'schema_version': 2, 'revision': 'demo', 'main': {'user_domains': ['example.com']}, 'settings': {}}))
         write('/fixtures/calls', '')
@@ -131,7 +131,7 @@ esac
 
     def snapshot():
         paths = [root / 'etc/config/podkop', root / 'etc/config/podkop_config_auto_updater',
-                 root / 'etc/podkop-config-auto-updater/schedule.json', root / 'etc/podkop-config-auto-updater/previous-podkop',
+                 root / 'tmp/podkop-config-auto-updater/schedule.json', root / 'tmp/podkop-config-auto-updater/previous-podkop',
                  root / 'tmp/podkop-config-auto-updater/status.json']
         return {str(path): (path.read_bytes(), path.stat().st_mode) for path in paths}
 
@@ -242,7 +242,7 @@ esac
         assert report['state'] == 'updated', (format, target, report)
         assert report['installed_version'] == report['available_version']
         assert snapshot() == before
-        assert (root / f'etc/podkop-config-auto-updater/before-software-{target}/podkop').is_file()
+        assert (root / f'tmp/podkop-config-auto-updater/before-software-{target}/podkop').is_file()
         assert not list((root / 'tmp/podkop-config-auto-updater').glob('software.*??????'))
         checks += 1
 

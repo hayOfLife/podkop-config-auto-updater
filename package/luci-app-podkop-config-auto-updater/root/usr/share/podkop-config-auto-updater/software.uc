@@ -53,9 +53,9 @@ function download(url, path, limit) {
 }
 
 function backup(configs) {
-	let directory = '/etc/podkop-config-auto-updater/before-software-' + target;
-	fs.mkdir('/etc/podkop-config-auto-updater', 0700);
-	fs.chmod('/etc/podkop-config-auto-updater', 0700);
+	let directory = '/tmp/podkop-config-auto-updater/before-software-' + target;
+	fs.mkdir('/tmp/podkop-config-auto-updater', 0700);
+	fs.chmod('/tmp/podkop-config-auto-updater', 0700);
 	fs.mkdir(directory, 0700);
 	if (!fs.chmod(directory, 0700)) die('backup_failed');
 	for (let name, text in configs) writePrivate(directory + '/' + name, text);

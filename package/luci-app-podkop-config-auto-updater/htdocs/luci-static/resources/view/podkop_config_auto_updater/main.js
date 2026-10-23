@@ -131,6 +131,8 @@ function statusText(status) {
 		});
 		text += ' Добавлено: ' + added + ', удалено: ' + removed + ', удалений пропущено: ' + pending + '.';
 	}
+	if ((status.state === 'applied' || status.state === 'unchanged') && Number.isFinite(status.time) && status.time > 0)
+		text += '\nОбновление произошло: ' + new Date(status.time * 1000).toLocaleString('ru-RU') + ' (время вашего браузера).';
 	return text;
 }
 
@@ -242,7 +244,7 @@ return view.extend({
 			fields.filter(function(field) { return field.indexOf(group[0]) === 0; }).forEach(addField);
 		});
 
-		var statusNode = E('p', {role: 'status'}, statusText(status));
+		var statusNode = E('p', {role: 'status', style: 'white-space: pre-line'}, statusText(status));
 		var button = E('button', {class: 'cbi-button cbi-button-action', type: 'button',
 			click: ui.createHandlerFn(this, function() {
 				return fs.exec(runner, ['update']).then(function(result) {

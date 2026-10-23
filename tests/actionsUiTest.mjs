@@ -94,6 +94,21 @@ for (const [result, expected] of [
 	checks++;
 }
 
+
+for (const state of ['applied', 'unchanged', 'error']) {
+ const stamp = 1792764000;
+ const app = await fixture(() => Promise.resolve({stdout: JSON.stringify({state, time: stamp})}));
+ const timer = [...app.timers.entries()].find(([, interval]) => interval === 30)[0];
+ await timer();
+ const text = flatten(app.tree);
+ if (state === 'error') assert.doesNotMatch(text, /Обновление произошло/);
+ else {
+  assert.ok(text.includes('\nОбновление произошло: ' + new Date(stamp * 1000).toLocaleString('ru-RU')));
+  assert.ok(app.tree.children.some(node => node?.attributes?.style === 'white-space: pre-line'));
+ }
+ checks++;
+}
+
 const statusApp = await fixture(() => Promise.resolve({stdout: JSON.stringify({enabled: false})}));
 assert.match(statusApp.options.enabled.description, /id="podkop-updater-enabled"/);
 assert.equal(statusApp.enabledNode.textContent, 'Программа "Podkop config auto updater" работает');
