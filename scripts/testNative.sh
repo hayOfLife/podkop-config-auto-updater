@@ -32,6 +32,7 @@ done
 ucode -L "$tools_dir/install/lib/ucode" -L "$PWD/package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater" tests/coreTest.uc
 ucode -L "$tools_dir/install/lib/ucode" -L "$PWD/package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater" tests/configTest.uc
 if [ -f tests/integrationTest.uc ]; then
-	ucode -L "$tools_dir/install/lib/ucode" -L "$PWD/package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater" tests/integrationTest.uc
+	integration_dir="$(mktemp -d /tmp/podkop-integration.XXXXXX)"
+	ucode -L "$tools_dir/install/lib/ucode" -L "$PWD/package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater" tests/integrationTest.uc "$integration_dir"
 fi
 sudo python3 tests/routerActionsTest.py "$tools_dir/install"

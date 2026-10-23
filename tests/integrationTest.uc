@@ -6,7 +6,7 @@ import { sourceRequest } from 'source';
 let passed = 0;
 function check(value, label) { if (!value) die(label); passed++; }
 function rejects(fn, label) { let failed = false; try { fn(); } catch (e) { failed = true; } check(failed, label); }
-let root = fs.mkdtemp('/tmp/sattelite-test.XXXXXX');
+let root = ARGV[0];
 fs.mkdir(root + '/work');
 fs.mkdir(root + '/work/delta');
 let paths = { config: root + '/podkop', backup: root + '/previous', work: root + '/work' };
