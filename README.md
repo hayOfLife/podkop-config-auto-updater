@@ -1,6 +1,13 @@
 # Podkop config auto updater
 
-**[Установить через скрипт](https://raw.githubusercontent.com/hayOfLife/podkop-config-auto-updater/main/install.sh)** · [Команды установки](docs/operations.ru.md#установка-и-обновление)
+Команда установки — выполните в SSH-терминале роутера от `root` после установки Podkop:
+
+```sh
+uclient-fetch -O /tmp/podkop-config-auto-updater-install.sh https://raw.githubusercontent.com/hayOfLife/podkop-config-auto-updater/main/install.sh &&
+sh /tmp/podkop-config-auto-updater-install.sh
+```
+
+[Подробная инструкция установки](docs/operations.ru.md#установка-и-обновление)
 
 Дополнение к Podkop для OpenWrt. Загружает конфигурацию из закрытого GitHub-репозитория или по прямой HTTPS-ссылке, объединяет списки и обновляет параметры секции `main`, DNS и загрузки списков.
 
@@ -36,5 +43,3 @@
 - [Инструкция для чата и искусственный пример](docs/config-authoring.ru.md)
 - [Установка, расписание, диагностика и восстановление](docs/operations.ru.md)
 - [Архитектура, сборка и проверки](docs/development.ru.md)
-
-Структура OpenWrt-пакета, LuCI/UCI, сборка через официальный SDK и разделение документации по задачам адаптированы по [Sheepfold](https://github.com/hayOfLife/luci-app-sheepfold-family-internet-control/tree/b8fef63b1b7834fb8800fa7a4b5ca53bd7c86b20). Функции семейного контроля Sheepfold в программу не входят.
