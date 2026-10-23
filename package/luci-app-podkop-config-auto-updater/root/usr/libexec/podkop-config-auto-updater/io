@@ -4,11 +4,36 @@ exec 9>&-
 case "$1" in
 	download)
 		work="$2"
+		curl_status=0
 		code="$(curl --disable --silent --fail --proto '=https' --max-redirs 0 \
 			--connect-timeout 15 --max-time 60 --max-filesize 1048576 \
 			--header "@$work/headers" --output "$work/feed.json" \
-			--write-out '%{http_code}' -- "$3" 2>/dev/null)" || exit 1
-		[ "$code" = 200 ]
+			--write-out '%{http_code}' -- "$3" 2>/dev/null)" || curl_status="$?"
+		error=download_failed
+		case "$curl_status" in
+			5) error=download_proxy_dns_failed ;;
+			6) error=download_dns_failed ;;
+			7) error=download_connect_failed ;;
+			28) error=download_timeout ;;
+			35) error=download_tls_failed ;;
+			51|60) error=download_certificate_failed ;;
+			77) error=download_ca_failed ;;
+			63) error=download_too_large ;;
+			47) error=download_http_redirect ;;
+			0|22)
+				case "$code" in
+					200) if [ "$curl_status" = 0 ]; then exit 0; fi ;;
+					401) error=download_http_unauthorized ;;
+					403) error=download_http_forbidden ;;
+					404) error=download_http_not_found ;;
+					429) error=download_http_rate_limited ;;
+					5[0-9][0-9]) error=download_http_server_error ;;
+					3[0-9][0-9]) error=download_http_redirect ;;
+					[1-5][0-9][0-9]) error=download_http_error ;;
+				esac ;;
+		esac
+		printf '%s\n' "$error" > "$work/download-error"
+		exit 1
 		;;
 	restart)
 		/etc/init.d/podkop restart >/dev/null 2>&1

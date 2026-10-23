@@ -66,12 +66,14 @@ while [ "$#" -gt 0 ]; do
  url="$1"; shift
 done
 [ "${MOCK_DOWNLOAD_FAIL:-0}" = 0 ] || exit 22
+if [ "${MOCK_CURL_EXIT:-0}" != 0 ]; then printf '%s' "${MOCK_HTTP_CODE:-000}"; exit "$MOCK_CURL_EXIT"; fi
 case "$url" in
  */releases/latest) cp /fixtures/release.json "$out" ;;
  */releases/download/*) cp "/fixtures/assets/${url##*/}" "$out" ;;
  *) cp /fixtures/feed.json "$out" ;;
 esac
-printf 200
+printf '%s' "${MOCK_HTTP_CODE:-200}"
+[ "${MOCK_HTTP_CODE:-200}" -lt 400 ] || exit 22
 ''', True)
     manager = '''#!/bin/sh
 kind="${0##*/}"
@@ -158,6 +160,25 @@ esac
             assert report['parsed'] == (case in ['valid', 'schema']), (case, report)
             assert report['valid'] == (case == 'valid'), (case, report)
         assert snapshot() == before, case
+        assert not list((root / 'tmp/podkop-config-auto-updater').glob('run.*'))
+        checks += 1
+
+    for curl_exit, http_code, expected in [
+        (5, '000', 'download_proxy_dns_failed'), (6, '000', 'download_dns_failed'),
+        (7, '000', 'download_connect_failed'), (28, '000', 'download_timeout'),
+        (35, '000', 'download_tls_failed'), (51, '000', 'download_certificate_failed'),
+        (60, '000', 'download_certificate_failed'), (77, '000', 'download_ca_failed'),
+        (63, '200', 'download_too_large'), (47, '302', 'download_http_redirect'),
+        (22, '401', 'download_http_unauthorized'), (22, '403', 'download_http_forbidden'),
+        (22, '404', 'download_http_not_found'), (22, '429', 'download_http_rate_limited'),
+        (22, '503', 'download_http_server_error'), (0, '302', 'download_http_redirect'),
+        (0, '204', 'download_http_error'), (23, '000', 'download_failed')
+    ]:
+        before = reset()
+        code, report = command('run', 'test', {'MOCK_CURL_EXIT': str(curl_exit), 'MOCK_HTTP_CODE': http_code})
+        assert code == 1 and report['error'] == expected, (curl_exit, http_code, report)
+        assert report['downloaded'] is False and report['parsed'] is False
+        assert snapshot() == before
         assert not list((root / 'tmp/podkop-config-auto-updater').glob('run.*'))
         checks += 1
 

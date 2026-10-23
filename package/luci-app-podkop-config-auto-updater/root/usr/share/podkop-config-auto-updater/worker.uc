@@ -44,8 +44,17 @@ function randomMinute() {
 function fetchFeed() {
 	let request = sourceRequest(config.config_url, config.github_token);
 	writePrivate(work + '/headers', request.headers);
-	if (system([helper, 'download', work, request.url], 75000) != 0) die('download_failed');
+	let downloaded = system([helper, 'download', work, request.url], 75000) == 0;
 	fs.unlink(work + '/headers');
+	if (!downloaded) {
+		let error = trim(fs.readfile(work + '/download-error') || '');
+		if (index(['download_proxy_dns_failed', 'download_dns_failed', 'download_connect_failed',
+			'download_timeout', 'download_tls_failed', 'download_certificate_failed', 'download_ca_failed',
+			'download_too_large', 'download_http_unauthorized', 'download_http_forbidden', 'download_http_not_found',
+			'download_http_rate_limited', 'download_http_server_error', 'download_http_redirect', 'download_http_error'], error) < 0)
+			error = 'download_failed';
+		die(error);
+	}
 	progress.downloaded = true;
 
 	let data = fs.readfile(work + '/feed.json');

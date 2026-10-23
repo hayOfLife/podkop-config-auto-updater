@@ -100,4 +100,16 @@ assert.equal(statusApp.enabledNode.textContent, 'Программа "Podkop conf
 assert.equal(statusApp.enabledNode.style.color, '#b94a48');
 assert.match(statusApp.options.github_token.description, /<a href="https:\/\/github.com/);
 checks++;
+
+for (const [error, expected] of [
+	['download_http_unauthorized', /HTTP 401/], ['download_http_forbidden', /HTTP 403/],
+	['download_http_not_found', /также означает отсутствие доступа/], ['download_http_rate_limited', /HTTP 429/],
+	['download_timeout', /Истёк срок/], ['download_dns_failed', /IP-адрес сервера/],
+	['download_certificate_failed', /не прошёл проверку/]
+]) {
+	const app = await fixture(() => Promise.resolve({code: 1, stdout: JSON.stringify({state: 'error', error, downloaded: false, parsed: false, valid: false})}));
+	await find(app.tree, 'Тест соединения').attributes.click();
+	assert.match(app.modals.at(-1), expected);
+	checks++;
+}
 console.log(`LuCI actions: ${checks} command routing, popup and background completion scenarios passed`);
