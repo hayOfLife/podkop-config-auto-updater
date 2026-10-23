@@ -3,8 +3,7 @@
 Команда установки — выполните в SSH-терминале роутера от `root` после установки Podkop:
 
 ```sh
-uclient-fetch -O /tmp/podkop-config-auto-updater-install.sh https://raw.githubusercontent.com/hayOfLife/podkop-config-auto-updater/main/install.sh &&
-sh /tmp/podkop-config-auto-updater-install.sh
+uclient-fetch -O /tmp/podkop-config-auto-updater-install.sh https://raw.githubusercontent.com/hayOfLife/podkop-config-auto-updater/main/install.sh && sh /tmp/podkop-config-auto-updater-install.sh
 ```
 
 [Подробная инструкция установки](docs/operations.ru.md#установка-и-обновление)

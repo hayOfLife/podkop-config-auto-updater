@@ -7,8 +7,7 @@
 Рекомендуемый путь — установочный скрипт. В SSH роутера, от `root`, из `/tmp` выполните:
 
 ```sh
-uclient-fetch -O /tmp/podkop-config-auto-updater-install.sh https://raw.githubusercontent.com/hayOfLife/podkop-config-auto-updater/main/install.sh
-sh /tmp/podkop-config-auto-updater-install.sh
+uclient-fetch -O /tmp/podkop-config-auto-updater-install.sh https://raw.githubusercontent.com/hayOfLife/podkop-config-auto-updater/main/install.sh && sh /tmp/podkop-config-auto-updater-install.sh
 ```
 
 Скрипт поддерживает только стабильные ветки 24.10 и 25.12, требует уже установленный Podkop, `jsonfilter`, `sha256sum` и HTTPS-загрузчик. Он получает последний опубликованный релиз, выбирает подходящий IPK/APK, сверяет SHA-256, обновляет индекс пакетов и устанавливает только приложение с его зависимостями. Он не прошивает роутер и не выполняет массовое обновление пакетов. Если в релизе нет нужного файла или сумма не совпадает, установка не начинается.
