@@ -120,6 +120,11 @@ const selection = await fixture(() => Promise.resolve({}), {ignored_options: ['s
 assert.equal(selection.options._apply_main_user_domains.cfgvalue('main'), '1');
 assert.equal(selection.options._apply_main_future_option.cfgvalue('main'), '1');
 assert.equal(selection.options._apply_settings_dns_server.cfgvalue('main'), '0');
+assert.equal(selection.options._heading_main.cfgvalue(), '<h3>Секция MAIN</h3>');
+assert.equal(selection.options._heading_settings.cfgvalue(), '<h3>Общие настройки Podkop</h3>');
+const fieldOrder = Object.keys(selection.options);
+assert.ok(fieldOrder.indexOf('_apply_main_future_option') < fieldOrder.indexOf('_heading_settings'));
+assert.ok(fieldOrder.indexOf('_apply_settings_dns_server') > fieldOrder.indexOf('_heading_settings'));
 selection.options._apply_main_user_domains.write('main', '0');
 assert.deepEqual([...selection.settings.ignored_options], ['settings.dns_server', 'main.user_domains']);
 selection.options._apply_settings_dns_server.write('main', '1');

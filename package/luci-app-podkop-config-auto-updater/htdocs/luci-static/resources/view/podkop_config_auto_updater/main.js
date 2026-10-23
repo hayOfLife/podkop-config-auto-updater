@@ -222,7 +222,7 @@ return view.extend({
 		heading.cfgvalue = function() {
 			return 'Все галочки включены по умолчанию. Выключенная галочка сохраняет локальное значение: добавления, замены и удаления этого параметра пропускаются. Отсутствующий в файле параметр ничего не меняет. Новые параметры появятся после успешного теста и обновления страницы.';
 		};
-		fields.forEach(function(field) {
+		function addField(field) {
 			var control = section.option(form.Flag, '_apply_' + field.replace('.', '_'), labels[field] || field);
 			control.default = '1';
 			control.rmempty = false;
@@ -234,6 +234,12 @@ return view.extend({
 				else uci.unset('podkop_config_auto_updater', sectionId, 'ignored_options');
 			};
 			control.remove = function(sectionId) { this.write(sectionId, '1'); };
+		}
+		[['main.', 'Секция MAIN'], ['settings.', 'Общие настройки Podkop']].forEach(function(group) {
+			var title = section.option(form.DummyValue, '_heading_' + group[0].replace('.', ''), '');
+			title.rawhtml = true;
+			title.cfgvalue = function() { return '<h3>' + group[1] + '</h3>'; };
+			fields.filter(function(field) { return field.indexOf(group[0]) === 0; }).forEach(addField);
 		});
 
 		var statusNode = E('p', {role: 'status'}, statusText(status));
