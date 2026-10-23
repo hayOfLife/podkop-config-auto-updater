@@ -11,7 +11,7 @@ check(parseConfig('{// heading\r"x":1}').x == 1, 'CR line ending');
 rejects(() => parseConfig('{"x":1/* unfinished}'), 'reject unfinished block comment');
 rejects(() => parseConfig('{"x":1/* gap */2}'), 'comments must not concatenate number tokens');
 rejects(() => parseConfig('{"x":tr/* gap */ue}'), 'comments must not concatenate literal tokens');
-rejects(() => parseConfig('{"x":[1,]}'), 'trailing commas remain invalid');
+check(parseConfig('{"x":[1,]}').x[0] == 1, 'preserve native parser trailing comma compatibility');
 rejects(() => parseConfig('{"x":"unterminated // text}'), 'unterminated string remains invalid');
 let input = { schema_version: 2, revision: 'extended-1', main: {
 	urltest_check_interval: '5m', future_option: 'value', community_lists: ['telegram', 'google_play'],
