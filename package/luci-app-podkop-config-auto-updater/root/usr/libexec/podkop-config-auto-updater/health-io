@@ -1,0 +1,93 @@
+#!/bin/sh
+set -eu
+umask 077
+exec 9>&-
+action="$1"
+work="$2"
+
+api() {
+	curl --disable --silent --fail --noproxy '*' --connect-timeout 2 --max-time 3 \
+		--max-filesize 2097152 --header "@$work/api-headers" "$@" 2>/dev/null
+}
+
+case "$action" in
+	discover)
+		if [ -S /var/run/podkop/ctl.sock ]; then
+			curl --disable --silent --fail --noproxy '*' --unix-socket /var/run/podkop/ctl.sock \
+				--connect-timeout 2 --max-time 3 --max-filesize 4096 \
+				--output "$work/runtime-status.json" http://localhost/status 2>/dev/null
+			curl --disable --silent --fail --noproxy '*' --unix-socket /var/run/podkop/ctl.sock \
+				--connect-timeout 2 --max-time 3 --max-filesize 4096 \
+				--output "$work/runtime-facts.json" http://localhost/facts 2>/dev/null
+			printf experimental > "$work/backend"
+		else
+			podkop show_sing_box_config > "$work/runtime-config.json" 2>/dev/null
+			printf stable > "$work/backend"
+		fi
+		;;
+	hash)
+		sha256sum /etc/config/podkop > "$work/config-hash"
+		if [ -S /var/run/podkop/ctl.sock ]; then
+			runtime=/var/run/podkop/config.json
+		else
+			runtime="$(ucode -e 'import { cursor } from "uci"; print(cursor().get("podkop", "settings", "config_path") || "/etc/sing-box/config.json");')"
+		fi
+		if [ -f "$runtime" ]; then sha256sum "$runtime" >> "$work/config-hash"; else printf 'missing\n' >> "$work/config-hash"; fi
+		;;
+	proxies)
+		api --output "$work/proxies.json" -- "$(cat "$work/api-url")/proxies"
+		;;
+	select)
+		api --request PUT --header 'Content-Type: application/json' --data-binary "@$work/select.json" \
+			--output "$work/select-response" -- "$(cat "$work/api-url")/proxies/notUnderSanctions-out"
+		;;
+	probe)
+		port="$3"
+		selected="$4"
+		case "$port" in ''|*[!0-9]*) exit 2 ;; esac
+		[ "$port" -ge 40000 ] && [ "$port" -le 60000 ] || exit 2
+		case "$selected" in notUnderSanctions-*) ;; *) exit 2 ;; esac
+		probe_pid=''
+		cleanup() {
+			if [ -n "$probe_pid" ]; then kill "$probe_pid" 2>/dev/null || true; wait "$probe_pid" 2>/dev/null || true; fi
+		}
+		trap cleanup EXIT
+		trap 'exit 130' HUP INT TERM
+		: > "$work/proof"
+		: > "$work/probe-body"
+		: > "$work/probe-metrics"
+		(
+			# Ограничение файла дополняет лимит curl для ответа без Content-Length
+			ulimit -f 16
+			exec curl --disable --silent -4 --noproxy '*' --proto '=https' --max-redirs 0 \
+				--connect-timeout 10 --max-time 20 --max-filesize 16384 --http1.1 --limit-rate 128 \
+				--local-port "$port" --output "$work/probe-body" --write-out '%{http_code}\n%{remote_ip}\n%{local_ip}\n' \
+				-- https://api.openai.com/v1/models > "$work/probe-metrics" 2>/dev/null
+		) &
+		probe_pid="$!"
+		attempt=0
+		while kill -0 "$probe_pid" 2>/dev/null && [ "$attempt" -lt 80 ]; do
+			attempt=$((attempt + 1))
+			if api --output "$work/connections.json" -- "$(cat "$work/api-url")/connections"; then
+				ucode -e '
+					import { readfile } from "fs";
+					let data;
+					try { data = json(readfile(ARGV[0])); } catch (e) { exit(0); }
+					for (let row in data?.connections || []) {
+						let m = row.metadata;
+						if (m?.sourcePort != ARGV[1] || m.host != "api.openai.com" || m.destinationPort != "443") continue;
+						let chain = row.chains;
+						let confirmed = type(chain) == "array" && index(chain, "notUnderSanctions-out") >= 0 && index(chain, ARGV[2]) >= 0;
+						print(sprintf("%J\n", { source: m.sourceIP, confirmed }));
+					}
+				' "$work/connections.json" "$port" "$selected" >> "$work/proof" 2>/dev/null || true
+			fi
+			sleep 0.2
+		done
+		result=0
+		wait "$probe_pid" || result="$?"
+		probe_pid=''
+		printf '%s\n' "$result" > "$work/probe-exit"
+		;;
+	*) exit 2 ;;
+esac

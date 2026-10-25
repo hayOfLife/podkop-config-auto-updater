@@ -1,0 +1,65 @@
+import { classifyProbe, planProbe } from 'health';
+let passed = 0;
+function check(value, label) { if (!value) die(label); passed++; }
+function response(message, code, kind) {
+	return sprintf('%J', { error: { message, code, type: kind || 'invalid_request_error' } });
+}
+let missing = response('Missing bearer authentication in header', null);
+let blocked = response('Country, region, or territory not supported', 'unsupported_country_region_territory', 'request_forbidden');
+check(classifyProbe(0, 401, missing) == 'reachable', 'known missing bearer response reaches authorization');
+check(classifyProbe(0, 401, response('Missing bearer authentication', null)) == 'reachable', 'known short bearer response');
+check(classifyProbe(0, 401, response('Missing bearer authentication in header.', null)) == 'reachable', 'known bearer response with punctuation');
+check(classifyProbe(0, 401, response('Missing bearer or basic authentication in header', null)) == 'reachable', 'known missing bearer or basic authentication response');
+check(classifyProbe(0, 401, response("You didn't provide an API key. You need to provide your API key in an Authorization header using Bearer auth (i.e. Authorization: Bearer YOUR_KEY)", null)) == 'reachable', 'known missing API key response');
+check(classifyProbe(0, 403, blocked) == 'region_blocked', 'exact OpenAI region error');
+check(classifyProbe(0, 400, blocked) == 'region_blocked', 'region classification uses exact code not just status');
+check(classifyProbe(0, 403, response('Forbidden', null, 'request_forbidden')) == 'unknown', 'generic 403 is not proof of a regional block');
+check(classifyProbe(0, 403, '<html>Cloudflare challenge</html>') == 'unknown', 'WAF page is not proof of a regional block');
+check(classifyProbe(0, 401, '<html>Unauthorized</html>') == 'unknown', 'HTML 401 does not prove OpenAI availability');
+check(classifyProbe(0, 401, response('Unauthorized', null)) == 'unknown', 'arbitrary JSON 401 does not prove OpenAI availability');
+check(classifyProbe(0, 401, response('Missing bearer authentication in header', 'invalid_api_key')) == 'unknown', 'invalid key code cannot impersonate missing authentication');
+check(classifyProbe(0, 401, response('Missing bearer authentication in header', null, 'other_error')) == 'unknown', 'unrecognized error type is not healthy');
+check(classifyProbe(0, 401, response('Missing bearer authentication\u0000unexpected', null)) == 'unknown', 'NUL cannot hide an unexpected authentication message suffix');
+check(classifyProbe(0, 401, '{"error": "Missing bearer authentication in header"}') == 'unknown', 'wrong error object shape is not healthy');
+check(classifyProbe(0, 200, missing) == 'unknown', 'unexpected HTTP200 is not accepted as a keyless API check');
+check(classifyProbe(0, 302, '') == 'unknown', 'redirect does not prove API availability');
+check(classifyProbe(0, 429, '<html>slow down</html>') == 'rate_limited', 'rate limit does not depend on JSON error formatting');
+check(classifyProbe(0, 500, '') == 'service_error' && classifyProbe(0, 503, '{}') == 'service_error', 'server failures are not proxy region failures');
+check(classifyProbe(0, 401, '{broken') == 'unknown', 'malformed response is not healthy');
+check(classifyProbe(0, 401, missing + sprintf('%065537d', 1)) == 'unknown', 'oversized response is never parsed as healthy');
+check(classifyProbe(28, 0, '') == 'network_error', 'curl timeout is a network failure');
+check(classifyProbe(35, 403, blocked) == 'unknown', 'partial region response does not prove a country restriction');
+for (let code in [51, 60, 77])
+	check(classifyProbe(code, 0, '') == 'unknown', 'certificate or CA failure does not cycle proxy pool');
+check(classifyProbe(22, 401, missing) == 'unknown', 'curl must run without fail-on-HTTP flag to prove reachability');
+check(classifyProbe(28, 403, '<html>partial challenge') == 'unknown', 'throttled WAF response does not become a network failure');
+check(classifyProbe(28, 401, missing) == 'unknown', 'incomplete response never proves healthy authorization');
+check(classifyProbe(28, 429, 'partial') == 'rate_limited', 'partial rate limit response still backs off without rotating');
+check(classifyProbe(28, 503, 'partial') == 'service_error', 'partial outage response does not cycle the pool');
+check(classifyProbe(0, 0, '') == 'network_error', 'no HTTP response is not healthy');
+let first = planProbe(null, 'node-a', 'network_error', 1000);
+let second = planProbe(first, 'node-a', 'network_error', 1030);
+let third = planProbe(second, 'node-a', 'network_error', 1060);
+check(first.action == 'keep' && first.failures == 1 && first.next_check == 1030, 'first network failure retries in thirty seconds');
+check(second.action == 'keep' && second.failures == 2 && second.next_check == 1060 && third.action == 'rotate' && third.next_check == 1060, 'three consecutive failures rotate immediately');
+let changed = planProbe(second, 'node-b', 'network_error', 1060);
+check(changed.failures == 1 && changed.action == 'keep' && changed.next_check == 1090, 'another selected node does not inherit previous failures');
+let healthy = planProbe(second, 'node-a', 'reachable', 1060);
+check(healthy.failures == 0 && healthy.action == 'keep' && healthy.next_check == 1240, 'reachable check resets consecutive failures');
+let afterHealthy = planProbe(healthy, 'node-a', 'network_error', 1240);
+check(afterHealthy.failures == 1 && afterHealthy.action == 'keep' && afterHealthy.next_check == 1270, 'network streak restarts after successful authorization response');
+let region = planProbe(healthy, 'node-a', 'region_blocked', 1240);
+check(region.action == 'rotate' && region.next_check == 1240, 'region restriction rotates without three retries');
+let limited = planProbe(second, 'node-a', 'rate_limited', 1060);
+check(limited.action == 'keep' && limited.failures == 0 && limited.next_check == 1660, '429 backs off ten minutes without rotating or banning the node');
+let outage = planProbe(second, 'node-a', 'service_error', 1060);
+check(outage.action == 'keep' && outage.failures == 0 && outage.next_check == 1240, 'server outage waits without switching every node');
+let unknown = planProbe(second, 'node-a', 'unknown', 1060);
+check(unknown.action == 'keep' && unknown.failures == 0 && unknown.next_check == 1240, 'unknown HTML or auth response is not treated as region proof');
+let unconfirmed = planProbe(second, 'node-a', 'route_unconfirmed', 1060);
+check(unconfirmed.action == 'keep' && unconfirmed.result == 'route_unconfirmed' && unconfirmed.failures == 0 && unconfirmed.next_check == 1240, 'unconfirmed route neither proves health nor rotates a node');
+check(index(sprintf('%J', healthy), 'authentication') < 0 && !exists(healthy, 'body'), 'state contains classification only without response body');
+let invalid = false;
+try { planProbe(null, 'node-a', 'arbitrary-result', 1000); } catch (e) { invalid = true; }
+check(invalid, 'internal unknown classification rejected');
+printf('health: %d checks passed\n', passed);

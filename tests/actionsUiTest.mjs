@@ -100,7 +100,7 @@ for (const [result, expected] of [
 for (const state of ['applied', 'unchanged', 'error']) {
  const stamp = 1792764000;
  const app = await fixture(() => Promise.resolve({stdout: JSON.stringify({state, time: stamp})}));
- const timer = [...app.timers.entries()].find(([, interval]) => interval === 30)[0];
+ const timer = [...app.timers.entries()].find(([, interval]) => interval === 10)[0];
  await timer();
  const text = flatten(app.tree);
  if (state === 'error') assert.doesNotMatch(text, /Обновление произошло/);
@@ -115,7 +115,7 @@ const statusApp = await fixture(() => Promise.resolve({stdout: JSON.stringify({e
 assert.match(statusApp.options.enabled.description, /id="podkop-updater-enabled"/);
 assert.equal(statusApp.enabledNode.textContent, 'Программа "Podkop config auto updater" работает');
 assert.equal(statusApp.enabledNode.style.color, '#22863a');
-const statusTimer = [...statusApp.timers.entries()].find(([, interval]) => interval === 30)[0];
+const statusTimer = [...statusApp.timers.entries()].find(([, interval]) => interval === 10)[0];
 await statusTimer();
 assert.equal(statusApp.enabledNode.textContent, 'Программа "Podkop config auto updater" выключена');
 assert.equal(statusApp.enabledNode.style.color, '#b94a48');
@@ -200,8 +200,95 @@ const totals = await fixture(() => Promise.resolve({stdout: JSON.stringify({stat
 	'notUnderSanctions.user_domains': {added: 5, removed: 1, pending: 4},
 	settings: {added: 1, removed: 0, pending: 0}
 }})}));
-const totalsTimer = [...totals.timers.entries()].find(([, interval]) => interval === 30)[0];
+const totalsTimer = [...totals.timers.entries()].find(([, interval]) => interval === 10)[0];
 await totalsTimer();
 assert.match(flatten(totals.tree), /Добавлено: 8, удалено: 4, удалений пропущено: 4/);
+checks++;
+
+for (const [state, expected] of [
+	['healthy', /дошёл до проверки авторизации/], ['checking', /Проверяется соединение/],
+	['region_blocked', /отклонил запрос из-за региона/], ['network_error', /Сетевая ошибка/],
+	['rate_limited', /HTTP 429.*Проверки отложены/], ['service_error', /ошибку сервиса/],
+	['unknown', /доступность не подтверждена/], ['route_unconfirmed', /Маршрут проверки не подтверждён/],
+	['not_configured', /ещё не настроена/], ['disabled', /Выключен/],
+	['error', /Не удалось выполнить контроль/], ['no_eligible_nodes', /Не найден узел/],
+	['switched', /выбран другой узел/], ['selection_changed', /изменён вне программы/]
+]) {
+	const app = await fixture(() => Promise.resolve({stdout: JSON.stringify({enabled: true,
+		openai_check_enabled: true, health: {state}})}));
+	const healthNode = app.tree.children.find(node => node?.attributes?.id === 'podkop-updater-openai-status');
+	assert.equal(app.options.openai_check_enabled.default, '1');
+	assert.equal(app.options.openai_check_enabled.title, 'Контролировать доступ к OpenAI');
+	assert.match(app.options.openai_check_enabled.description, /раз в 3 минуты без API-ключа/);
+	assert.match(app.options.openai_check_enabled.description, /только в notUnderSanctions/);
+	assert.match(app.options.openai_check_enabled.description, /вместо URLTest/);
+	assert.equal(app.options._apply_openai_check_enabled, undefined);
+	assert.equal(app.tree.children.indexOf(healthNode), 2);
+	const timer = [...app.timers.entries()].find(([, interval]) => interval === 10)[0];
+	await timer();
+	assert.match(flatten(healthNode), expected);
+	assert.deepEqual(app.calls.map(call => call[1]), [['status']]);
+	checks++;
+}
+
+for (const [enabled, openaiEnabled, expected] of [
+	[false, true, /выключен вместе с программой/], [true, false, /Контроль OpenAI выключен/]
+]) {
+	const app = await fixture(() => Promise.resolve({stdout: JSON.stringify({enabled,
+		openai_check_enabled: openaiEnabled, health: {state: 'healthy', selected: 'notUnderSanctions-29-out'}})}));
+	await [...app.timers.entries()].find(([, interval]) => interval === 10)[0]();
+	const text = flatten(app.tree.children.find(node => node?.attributes?.id === 'podkop-updater-openai-status'));
+	assert.match(text, expected);
+	assert.doesNotMatch(text, /дошёл до проверки авторизации|notUnderSanctions-29-out/);
+	checks++;
+}
+
+for (const [error, expected] of [
+	['api_unavailable', /с API Podkop/], ['invalid_runtime', /конфигурация Podkop не подходит/],
+	['selection_failed', /не подтвердил переключение/], ['io_failed', /обработать временные данные/],
+	['demo_secret', /Не удалось выполнить контроль/]
+]) {
+	const app = await fixture(() => Promise.resolve({stdout: JSON.stringify({enabled: true,
+		openai_check_enabled: true, health: {state: 'error', error, body: 'demo_secret',
+			selected: 'vless://demo_secret@example.test:443'}})}));
+	await [...app.timers.entries()].find(([, interval]) => interval === 10)[0]();
+	const text = flatten(app.tree.children.find(node => node?.attributes?.id === 'podkop-updater-openai-status'));
+	assert.match(text, expected);
+	assert.doesNotMatch(text, /demo_secret|vless:/);
+	checks++;
+}
+
+for (const [enabled, openaiEnabled] of [[false, true], [true, false]]) {
+	const app = await fixture(() => Promise.resolve({stdout: JSON.stringify({enabled,
+		openai_check_enabled: openaiEnabled, health: {state: 'error', error: 'api_unavailable', next_check: 1792764180}})}));
+	await [...app.timers.entries()].find(([, interval]) => interval === 10)[0]();
+	const text = flatten(app.tree.children.find(node => node?.attributes?.id === 'podkop-updater-openai-status'));
+	assert.match(text, /Контроль OpenAI выключен/);
+	assert.match(text, /Возврат прежнего выбора не подтверждён/);
+	assert.match(text, /Не удалось связаться с API Podkop/);
+	assert.match(text, /Следующая попытка:/);
+	assert.doesNotMatch(text, /Следующая проверка:/);
+	checks++;
+}
+
+for (const httpStatus of [200, 401]) {
+	const app = await fixture(() => Promise.resolve({stdout: JSON.stringify({enabled: true,
+		openai_check_enabled: true, health: {state: 'unknown', http_status: httpStatus,
+			checked_at: 1792764000, next_check: 1792764180, selected: 'notUnderSanctions-29-out'}})}));
+	await [...app.timers.entries()].find(([, interval]) => interval === 10)[0]();
+	const text = flatten(app.tree.children.find(node => node?.attributes?.id === 'podkop-updater-openai-status'));
+	assert.match(text, /доступность не подтверждена/);
+	assert.doesNotMatch(text, /дошёл до проверки авторизации/);
+	assert.ok(text.includes('\nПоследняя проверка: ' + new Date(1792764000 * 1000).toLocaleString('ru-RU')));
+	assert.ok(text.includes('\nСледующая проверка: ' + new Date(1792764180 * 1000).toLocaleString('ru-RU')));
+	assert.match(text, /Узел: notUnderSanctions-29-out/);
+	checks++;
+}
+
+const disconnected = await fixture(() => Promise.reject(new Error('demo_secret_rpc')));
+await [...disconnected.timers.entries()].find(([, interval]) => interval === 10)[0]();
+const disconnectedText = flatten(disconnected.tree.children.find(node => node?.attributes?.id === 'podkop-updater-openai-status'));
+assert.match(disconnectedText, /не удалось получить состояние с роутера/);
+assert.doesNotMatch(disconnectedText, /demo_secret/);
 checks++;
 console.log(`LuCI actions: ${checks} command routing, popup, selection and background completion scenarios passed`);

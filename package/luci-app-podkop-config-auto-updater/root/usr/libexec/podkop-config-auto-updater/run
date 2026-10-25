@@ -3,18 +3,31 @@ set -eu
 umask 077
 case "${1:-}" in
 	status)
-		ucode -e 'import { readfile } from "fs"; import { cursor } from "uci"; function load(path) { try { return json(readfile(path)) || {}; } catch(e) { return {}; } } let s = load("/tmp/podkop-config-auto-updater/status.json"); let p = load("/tmp/podkop-config-auto-updater/schedule.json"); s.enabled = cursor().get("podkop_config_auto_updater", "main", "enabled") == "1"; s.ipv6_error = !!readfile("/tmp/podkop-config-auto-updater/ipv6-error"); s.next_run = p.next; s.fields = load("/tmp/podkop-config-auto-updater/fields.json").fields || []; print(sprintf("%J\n", s));'
+		ucode -e 'import { readfile } from "fs"; import { cursor } from "uci"; function load(path) { try { return json(readfile(path)) || {}; } catch(e) { return {}; } } let s = load("/tmp/podkop-config-auto-updater/status.json"); let p = load("/tmp/podkop-config-auto-updater/schedule.json"); let c = cursor(); s.enabled = c.get("podkop_config_auto_updater", "main", "enabled") == "1"; s.openai_check_enabled = c.get("podkop_config_auto_updater", "main", "openai_check_enabled") != "0"; s.health = load("/tmp/podkop-config-auto-updater/health.json"); s.ipv6_error = !!readfile("/tmp/podkop-config-auto-updater/ipv6-error"); s.next_run = p.next; s.fields = load("/tmp/podkop-config-auto-updater/fields.json").fields || []; print(sprintf("%J\n", s));'
 		exit 0 ;;
 	daemon)
-		while :; do "$0" tick >/dev/null 2>&1 || true; sleep 30; done ;;
-	update|tick|test) ;;
+		while :; do
+			"$0" tick >/dev/null 2>&1 || true
+			"$0" health-tick >/dev/null 2>&1 || true
+			sleep 30
+		done ;;
+	update|tick|test|health-tick|health-release) ;;
 	*) exit 2 ;;
 esac
 mkdir -p /tmp/podkop-config-auto-updater
 chmod 700 /tmp/podkop-config-auto-updater
 exec 9>/tmp/podkop-config-auto-updater/lock
-flock -n 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
+if [ "$1" = health-release ]; then
+	flock -w 25 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
+else
+	flock -n 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
+fi
 work="$(mktemp -d /tmp/podkop-config-auto-updater/run.XXXXXX)"
 trap 'rm -rf -- "$work"' EXIT HUP INT TERM
 mkdir "$work/delta"
-ucode -L /usr/share/podkop-config-auto-updater /usr/share/podkop-config-auto-updater/worker.uc "$1" "$work"
+case "$1" in
+	health-tick|health-release)
+		ucode -L /usr/share/podkop-config-auto-updater /usr/share/podkop-config-auto-updater/health-worker.uc "${1#health-}" "$work"
+		;;
+	*) ucode -L /usr/share/podkop-config-auto-updater /usr/share/podkop-config-auto-updater/worker.uc "$1" "$work" ;;
+esac

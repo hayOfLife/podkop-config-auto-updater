@@ -139,6 +139,45 @@ function statusText(status) {
 	return text;
 }
 
+function healthText(status) {
+	var health = status.health || {};
+	var disabled = status.enabled === false ? 'Контроль OpenAI выключен вместе с программой.' :
+		status.openai_check_enabled === false ? 'Контроль OpenAI выключен.' : '';
+	if (disabled && health.state !== 'error') return disabled;
+	var messages = {
+		healthy: 'Запрос OpenAI дошёл до проверки авторизации через выбранный узел.',
+		checking: 'Проверяется соединение с OpenAI через notUnderSanctions.',
+		region_blocked: 'OpenAI отклонил запрос из-за региона выбранного узла.',
+		network_error: 'Сетевая ошибка при проверке OpenAI. Проверка будет повторена.',
+		rate_limited: 'OpenAI ограничил частоту запросов (HTTP 429). Проверки отложены.',
+		service_error: 'OpenAI вернул ошибку сервиса. Проверка будет повторена.',
+		unknown: 'Получен неожиданный ответ OpenAI; доступность не подтверждена.',
+		route_unconfirmed: 'Маршрут проверки не подтверждён. Другой узел по результату запроса не выбирается.',
+		not_configured: 'Секция notUnderSanctions ещё не настроена для контроля OpenAI.',
+		disabled: 'Выключен.',
+		error: 'Не удалось выполнить контроль OpenAI. Проверьте настройки Podkop.',
+		no_eligible_nodes: 'Не найден узел, подходящий для контроля OpenAI.',
+		switched: 'Для notUnderSanctions выбран другой узел.',
+		selection_changed: 'Выбранный узел изменён вне программы. Контроль возобновится позже.'
+	};
+	var details = {
+		api_unavailable: 'Не удалось связаться с API Podkop.',
+		invalid_runtime: 'Текущая конфигурация Podkop не подходит для контроля OpenAI.',
+		selection_failed: 'Podkop не подтвердил переключение узла.',
+		io_failed: 'Не удалось обработать временные данные контроля OpenAI.'
+	};
+	var text = disabled ? disabled + ' Не удалось завершить последнее действие контроля. Возврат прежнего выбора не подтверждён.' :
+		'Контроль OpenAI: ' + (Object.prototype.hasOwnProperty.call(messages, health.state) ? messages[health.state] : 'Проверка ещё не выполнялась.');
+	if (health.state === 'error' && Object.prototype.hasOwnProperty.call(details, health.error)) text += ' ' + details[health.error];
+	if (typeof health.selected === 'string' && /^notUnderSanctions-[0-9]+-out$/.test(health.selected))
+		text += ' Узел: ' + health.selected + '.';
+	if (Number.isFinite(health.checked_at) && health.checked_at > 0)
+		text += '\nПоследняя проверка: ' + new Date(health.checked_at * 1000).toLocaleString('ru-RU') + ' (время вашего браузера).';
+	if (Number.isFinite(health.next_check) && health.next_check > 0)
+		text += (disabled ? '\nСледующая попытка: ' : '\nСледующая проверка: ') + new Date(health.next_check * 1000).toLocaleString('ru-RU') + ' (время вашего браузера).';
+	return text;
+}
+
 return view.extend({
 	load: function() {
 		return Promise.all([readStatus(), readSoftwareStatus(), uci.load('podkop_config_auto_updater')]).then(function(results) {
@@ -175,6 +214,12 @@ return view.extend({
 		option.default = '1';
 		option.rmempty = false;
 		option.description = 'Удаляются только записи с пометкой delete. Остальные существующие записи сохраняются.';
+		option = section.option(form.Flag, 'openai_check_enabled', 'Контролировать доступ к OpenAI');
+		option.default = '1';
+		option.rmempty = false;
+		option.description = 'При включённой программе проверяет OpenAI раз в 3 минуты без API-ключа и управляет выбором узла только в notUnderSanctions. ' +
+			'Сетевые ошибки перепроверяются; при ограничении частоты запросов делается пауза. ' +
+			'В этой секции контроллер выбирает узел вместо URLTest. Доступность Claude, Gemini и других сервисов проверка не подтверждает.';
 		option = section.option(form.Flag, 'disable_ipv6', 'Выключить ip v6');
 		option.default = '0';
 		option.rmempty = false;
@@ -253,11 +298,13 @@ return view.extend({
 		});
 
 		var statusNode = E('p', {role: 'status', style: 'white-space: pre-line'}, statusText(status));
+		var healthNode = E('p', {id: 'podkop-updater-openai-status', role: 'status', style: 'white-space: pre-line'}, healthText(status));
 		var button = E('button', {class: 'cbi-button cbi-button-action', type: 'button',
 			click: ui.createHandlerFn(this, function() {
 				return fs.exec(runner, ['update']).then(function(result) {
 					return readStatus().then(function(current) {
 						statusNode.textContent = statusText(current);
+						healthNode.textContent = healthText(current);
 						ui.addNotification(null, E('p', {}, statusText(current)), result.code ? 'error' : 'info');
 					});
 				});
@@ -313,12 +360,15 @@ return view.extend({
 		if (softwareActive) poll.add(refreshSoftware, 3);
 		poll.add(function() { return readStatus().then(function(current) {
 			statusNode.textContent = statusText(current);
+			healthNode.textContent = healthText(current);
 			refreshEnabled(current);
-		}); }, 30);
+		}).catch(function() {
+			healthNode.textContent = 'Контроль OpenAI: не удалось получить состояние с роутера.';
+		}); }, 10);
 		return map.render().then(function(formNode) {
 			enabledNode = formNode.querySelector('#podkop-updater-enabled');
 			refreshEnabled(status);
-			return E('div', {}, [formNode, statusNode, E('div', {class: 'cbi-page-actions'}, [testButton, ' ', button]),
+			return E('div', {}, [formNode, statusNode, healthNode, E('div', {class: 'cbi-page-actions'}, [testButton, ' ', button]),
 				E('p', {class: 'cbi-section-descr'}, 'Обе кнопки используют сохранённые настройки. После изменения полей нажмите «Сохранить и применить». Тест соединения только скачивает и проверяет файл.'),
 				E('h3', {}, 'Обновление программ'), softwareNode,
 				E('div', {class: 'cbi-page-actions'}, [podkopButton, ' ', selfButton]),
