@@ -15,12 +15,14 @@ function find(node, label) {
 	if (node?.tag === 'button' && flatten(node) === label) return node;
 	for (const child of node?.children || []) { const match = find(child, label); if (match) return match; }
 }
-async function fixture(exec, initial = {}) {
+async function fixture(exec, initial = {}, fields = ['main.future_option', 'settings.dns_server']) {
 	const calls = [], modals = [], timers = new Map(), options = {};
 	const settings = {...initial};
 	const enabledNode = element('span', {}, []);
+	let mapDescription;
 	class FormMap {
-		section() { return {option(type, name) { return options[name] = {value() {}}; }}; }
+		constructor(name, title, description) { mapDescription = description; }
+		section() { return {option(type, name, title) { return options[name] = {title, value() {}}; }}; }
 		render() {
 			const form = element('form', {}, Object.values(options).map(option => option.description));
 			form.querySelector = selector => selector === '#podkop-updater-enabled' ? enabledNode : null;
@@ -37,8 +39,8 @@ async function fixture(exec, initial = {}) {
 			showModal(title, content) { modals.push(content.map(flatten).join(' ')); }},
 		poll: {add(fn, interval) { timers.set(fn, interval); }, remove(fn) { timers.delete(fn); }}
 	});
-	const tree = await view.render({enabled: true, software: {state: 'idle'}, fields: ['main.future_option', 'settings.dns_server']});
-	return {tree, calls, modals, timers, options, enabledNode, settings};
+	const tree = await view.render({enabled: true, software: {state: 'idle'}, fields});
+	return {tree, calls, modals, timers, options, enabledNode, settings, mapDescription};
 }
 
 for (const report of [
@@ -136,9 +138,12 @@ assert.equal(selection.options._apply_main_user_domains.cfgvalue('main'), '1');
 assert.equal(selection.options._apply_main_future_option.cfgvalue('main'), '1');
 assert.equal(selection.options._apply_settings_dns_server.cfgvalue('main'), '0');
 assert.equal(selection.options._heading_main.cfgvalue(), '<h3>Секция MAIN</h3>');
+assert.equal(selection.options._heading_notUnderSanctions.cfgvalue(), '<h3>Секция notUnderSanctions</h3>');
 assert.equal(selection.options._heading_settings.cfgvalue(), '<h3>Общие настройки Podkop</h3>');
 const fieldOrder = Object.keys(selection.options);
-assert.ok(fieldOrder.indexOf('_apply_main_future_option') < fieldOrder.indexOf('_heading_settings'));
+assert.ok(fieldOrder.indexOf('_apply_main_future_option') < fieldOrder.indexOf('_heading_notUnderSanctions'));
+assert.ok(fieldOrder.indexOf('_apply_notUnderSanctions_user_domains') > fieldOrder.indexOf('_heading_notUnderSanctions'));
+assert.ok(fieldOrder.indexOf('_apply_notUnderSanctions_user_domains') < fieldOrder.indexOf('_heading_settings'));
 assert.ok(fieldOrder.indexOf('_apply_settings_dns_server') > fieldOrder.indexOf('_heading_settings'));
 selection.options._apply_main_user_domains.write('main', '0');
 assert.deepEqual([...selection.settings.ignored_options], ['settings.dns_server', 'main.user_domains']);
@@ -147,5 +152,56 @@ assert.deepEqual([...selection.settings.ignored_options], ['main.user_domains'])
 selection.options._apply_main_user_domains.write('main', '1');
 assert.equal(selection.settings.ignored_options, undefined);
 assert.equal(selection.calls.length, 0);
+checks++;
+
+const twoSections = await fixture(() => Promise.resolve({}), {
+	ignored_options: ['main.user_domains_text', 'notUnderSanctions.user_subnets_text', 'settings.dns_server']
+}, ['main.user_domains_text', 'notUnderSanctions.user_domains_text', 'notUnderSanctions.user_domains',
+	'notUnderSanctions.future_option', 'other.user_domains']);
+assert.match(twoSections.mapDescription, /main, notUnderSanctions/);
+assert.match(twoSections.mapDescription, /доступность всех этих сервисов он не проверяет/);
+for (const field of Object.keys(twoSections.options).filter(field => field.startsWith('_apply_main_'))) {
+	const paired = twoSections.options[field.replace('_apply_main_', '_apply_notUnderSanctions_')];
+	assert.equal(paired.title, twoSections.options[field].title);
+	assert.equal(paired.default, '1');
+}
+assert.equal(twoSections.options._apply_main_user_domains.cfgvalue('main'), '0');
+assert.equal(twoSections.options._apply_notUnderSanctions_user_domains.cfgvalue('main'), '1');
+assert.equal(twoSections.options._apply_notUnderSanctions_user_subnets.cfgvalue('main'), '0');
+assert.equal(twoSections.options._apply_notUnderSanctions_future_option.cfgvalue('main'), '1');
+assert.equal(twoSections.options._apply_main_user_domains_text, undefined);
+assert.equal(twoSections.options._apply_notUnderSanctions_user_domains_text, undefined);
+assert.equal(twoSections.options._apply_other_user_domains, undefined);
+twoSections.options._apply_notUnderSanctions_user_domains.write('main', '0');
+assert.deepEqual([...twoSections.settings.ignored_options], [
+	'main.user_domains', 'notUnderSanctions.user_subnets', 'settings.dns_server', 'notUnderSanctions.user_domains'
+]);
+twoSections.options._apply_main_user_domains.write('main', '1');
+assert.equal(twoSections.options._apply_notUnderSanctions_user_domains.cfgvalue('main'), '0');
+assert.equal(twoSections.options._apply_settings_dns_server.cfgvalue('main'), '0');
+assert.equal(twoSections.calls.length, 0);
+checks++;
+
+for (const [error, expected] of [
+	['invalid_comment', /заголовке группы/], ['comments_require_text', /текстовый тип списка/],
+	['section_move_blocked', /Перенос между main и notUnderSanctions заблокирован/],
+	['empty_proxy_pool', /main или notUnderSanctions осталась бы без серверов URLTest/]
+]) {
+	const app = await fixture(() => Promise.resolve({code: 1,
+		stdout: JSON.stringify({state: 'error', error, downloaded: true, parsed: true, valid: false})}));
+	await find(app.tree, 'Тест соединения').attributes.click();
+	assert.match(app.modals.at(-1), expected);
+	assert.match(app.modals.at(-1), /Настройки Podkop не изменялись/);
+	checks++;
+}
+
+const totals = await fixture(() => Promise.resolve({stdout: JSON.stringify({state: 'applied', counts: {
+	'main.user_domains': {added: 2, removed: 3, pending: 0},
+	'notUnderSanctions.user_domains': {added: 5, removed: 1, pending: 4},
+	settings: {added: 1, removed: 0, pending: 0}
+}})}));
+const totalsTimer = [...totals.timers.entries()].find(([, interval]) => interval === 30)[0];
+await totalsTimer();
+assert.match(flatten(totals.tree), /Добавлено: 8, удалено: 4, удалений пропущено: 4/);
 checks++;
 console.log(`LuCI actions: ${checks} command routing, popup, selection and background completion scenarios passed`);

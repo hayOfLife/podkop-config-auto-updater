@@ -35,6 +35,29 @@ rejects(() => applyPatch(paths, patch, original, () => {
 	return false;
 }, () => true), 'reject concurrent edit');
 check(index(fs.readfile(paths.config), 'concurrent edit') >= 0, 'keep concurrent edit');
+writePrivate(paths.config, original);
+let paired = { main: { user_domains_text: 'ordinary.example' }, settings: {}, notUnderSanctions: {
+	connection_type: 'proxy', proxy_config_type: 'urltest', urltest_proxy_links: ['vless://regional@example.test:443'],
+	user_domains_text: '// AI\nai.example', user_domain_list_type: 'text'
+} };
+restarts = 0;
+check(applyPatch(paths, paired, original, () => false, () => { restarts++; return true; }, ['notUnderSanctions', 'main']), 'two sections apply atomically');
+check(restarts == 1, 'two sections require one restart');
+let pairedText = fs.readfile(paths.config);
+let pairedCursor = cursor(root, root + '/work/delta');
+let names = [];
+pairedCursor.foreach('podkop', null, section => { push(names, section['.name']); });
+check(join(',', names) == 'settings,notUnderSanctions,main,other', 'regional section before main preserves other section order');
+check(pairedCursor.get('podkop', 'notUnderSanctions', 'user_domains_text') == '// AI\nai.example', 'UCI stores multiline comments literally');
+check(!applyPatch(paths, { main: {}, notUnderSanctions: {}, settings: {} }, pairedText, () => false, () => { die('unexpected restart'); }, ['notUnderSanctions', 'main']), 'ordered repeat does not restart');
+writePrivate(paths.config, original);
+restarts = 0;
+rejects(() => applyPatch(paths, paired, original, () => false, () => { restarts++; return restarts == 2; }, ['notUnderSanctions', 'main']), 'two section restart failure rolls back');
+check(fs.readfile(paths.config) == original && restarts == 2, 'two section rollback restores original sections and order');
+let collided = original + "config settings 'notUnderSanctions'\n option existing 'keep'\n";
+writePrivate(paths.config, collided);
+rejects(() => applyPatch(paths, paired, collided, () => false, () => true, ['notUnderSanctions', 'main']), 'reject existing name with another UCI type');
+check(fs.readfile(paths.config) == collided, 'section name collision does not change router config');
 let request = sourceRequest('https://github.com/example/config/blob/main/config/main.json', 'test_token');
 check(request.url == 'https://api.github.com/repos/example/config/contents/config/main.json?ref=main', 'convert GitHub file link');
 check(index(request.headers, 'Bearer test_token') >= 0, 'GitHub authorization header');

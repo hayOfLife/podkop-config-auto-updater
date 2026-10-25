@@ -180,6 +180,46 @@ esac
     assert metadata == {'fields': ['main.user_domains']}
     checks += 1
 
+    for scenario in ['apply', 'deletes_disabled', 'target_disabled', 'invalid_comment']:
+        reset()
+        write('/etc/init.d/podkop', '#!/bin/sh\nprintf "restart\\n" >> /fixtures/calls\nexit 0\n', True)
+        updater = root / 'etc/config/podkop_config_auto_updater'
+        updater.write_text(updater.read_text() + " option allow_deletes '" + ('0' if scenario == 'deletes_disabled' else '1') + "'\n")
+        if scenario == 'target_disabled':
+            updater.write_text(updater.read_text() + " list ignored_options 'notUnderSanctions.user_domains'\n")
+        write('/etc/config/podkop', "config settings 'settings'\n option dns_server '192.0.2.1'\nconfig section 'main'\n option connection_type 'proxy'\n option user_domain_list_type 'text'\n option user_domains_text 'ai.example'\nconfig section 'manual'\n option connection_type 'vpn'\n")
+        title = 'AI services' if scenario != 'invalid_comment' else 'invalid\nheading'
+        write('/fixtures/feed.json', json.dumps({
+            'schema_version': 3, 'revision': 'split-worker-test',
+            'main': {'user_domains': [{'value': 'ai.example', 'delete': True}, 'ordinary.example']},
+            'notUnderSanctions': {
+                'connection_type': 'proxy', 'proxy_config_type': 'urltest',
+                'urltest_proxy_links': ['vless://synthetic@example.test:443'],
+                'user_domains': [{'comment': title}, 'ai.example']
+            }, 'settings': {}
+        }))
+        before_podkop = (root / 'etc/config/podkop').read_bytes()
+        code, report = command('run', 'update')
+        if scenario == 'apply':
+            assert code == 0 and report['state'] == 'applied', report
+            applied = (root / 'etc/config/podkop').read_text()
+            assert applied.index("'notUnderSanctions'") < applied.index("'main'") < applied.index("'manual'")
+            assert '// AI services\nai.example' in applied and 'ordinary.example' in applied
+            assert "option dns_server '192.0.2.1'" in applied
+            assert (root / 'fixtures/calls').read_text() == 'restart\n'
+            code, repeated = command('run', 'update')
+            assert code == 0 and repeated['state'] == 'unchanged', repeated
+            assert (root / 'fixtures/calls').read_text() == 'restart\n'
+            metadata = json.loads((root / 'tmp/podkop-config-auto-updater/fields.json').read_text())
+            assert 'notUnderSanctions.user_domains' in metadata['fields']
+            assert 'AI services' not in json.dumps(metadata)
+        else:
+            expected = 'invalid_comment' if scenario == 'invalid_comment' else 'section_move_blocked'
+            assert code == 1 and report['error'] == expected, (scenario, report)
+            assert (root / 'etc/config/podkop').read_bytes() == before_podkop
+            assert not (root / 'fixtures/calls').read_text()
+        checks += 1
+
     for curl_exit, http_code, expected in [
         (5, '000', 'download_proxy_dns_failed'), (6, '000', 'download_dns_failed'),
         (7, '000', 'download_connect_failed'), (28, '000', 'download_timeout'),

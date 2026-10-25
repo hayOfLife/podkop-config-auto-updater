@@ -37,15 +37,18 @@ export function parseConfig(text) {
 };
 
 function canonicalField(field) {
-	if (field == 'main.user_domains_text') return 'main.user_domains';
-	if (field == 'main.user_subnets_text') return 'main.user_subnets';
+	if (match(field, /^(main|notUnderSanctions)\.user_(domains|subnets)_text$/)) return replace(field, /_text$/, '');
 	return field;
+}
+
+function configGroups(input) {
+	return input.schema_version === 3 ? ['main', 'notUnderSanctions', 'settings'] : ['main', 'settings'];
 }
 
 export function configFields(input) {
 	if (input.schema_version === 1) return map(listFields, key => 'main.' + key);
 	let fields = [];
-	for (let group in ['main', 'settings'])
+	for (let group in configGroups(input))
 		for (let key in keys(input[group])) push(fields, canonicalField(group + '.' + key));
 	return fields;
 };
@@ -73,23 +76,26 @@ function validateSetting(key, value) {
 
 export function validateConfig(input) {
 	if (input?.schema_version === 1)
-		return { lists: core.validateFeed(input), main: {}, settings: {}, revision: input.revision };
-	if (type(input) != 'object' || input.schema_version !== 2 || type(input.main) != 'object' || type(input.settings) != 'object')
+		return { sections: { main: { lists: core.validateFeed(input), options: {} } }, settings: {}, revision: input.revision };
+	if (type(input) != 'object' || (input.schema_version !== 2 && input.schema_version !== 3) || type(input.main) != 'object' || type(input.settings) != 'object' ||
+		(input.schema_version === 3 && type(input.notUnderSanctions) != 'object'))
 		die('invalid_schema');
+	let groups = configGroups(input);
 	for (let key in keys(input))
-		if (index(['schema_version', 'revision', 'main', 'settings'], key) < 0) die('unknown_field');
-	let lists = { schema_version: 1, section: 'main', revision: input.revision,
-		urltest_proxy_links: [], user_domains: [], user_subnets: [] };
-	let result = { main: {}, settings: {}, revision: input.revision };
-	for (let group in ['main', 'settings']) {
+		if (index(['schema_version', 'revision', ...groups], key) < 0) die('unknown_field');
+	let result = { sections: {}, settings: {}, revision: input.revision, ordered: input.schema_version === 3 };
+	for (let group in groups) {
+		let lists = { schema_version: 1, section: 'main', revision: input.revision,
+			urltest_proxy_links: [], user_domains: [], user_subnets: [] };
+		let options = {};
 		if (length(keys(input[group])) > 256) die('too_many_options');
 		for (let key, value in input[group]) {
 			if (index(key, '\u0000') >= 0 || match(key, /[[:space:][:cntrl:]]/) || !match(key, /^[a-z][a-z0-9_]{0,63}$/)) die('invalid_option_name');
 			if (group == 'settings' && index(settingsFields, key) < 0) die('unsupported_setting');
-			if (group == 'main' && index(listFields, key) >= 0) { lists[key] = value; continue; }
-			if (group == 'main' && index(['user_domains_text', 'user_subnets_text'], key) >= 0) {
+			if (group != 'settings' && index(listFields, key) >= 0) { lists[key] = value; continue; }
+			if (group != 'settings' && index(['user_domains_text', 'user_subnets_text'], key) >= 0) {
 				let canonical = replace(key, /_text$/, '');
-				if (exists(input.main, canonical) || type(value) != 'string') die('ambiguous_list');
+				if (exists(input[group], canonical) || type(value) != 'string') die('ambiguous_list');
 				lists[canonical] = core.tokens(value);
 				continue;
 			}
@@ -101,25 +107,49 @@ export function validateConfig(input) {
 					if (exists(seen, entry.value) && seen[entry.value] != entry.remove) die('conflicting_operations');
 					seen[entry.value] = entry.remove;
 				}
-				result[group][key] = { kind: 'list', entries };
+				options[key] = { kind: 'list', entries };
 			}
 			else {
 				let entry = operation(value);
 				if (group == 'settings') validateSetting(key, entry.value);
-				result[group][key] = { kind: 'scalar', entry };
+				options[key] = { kind: 'scalar', entry };
 			}
 		}
+		if (group == 'settings') result.settings = options;
+		else result.sections[group] = { lists: core.validateFeed(lists, input.schema_version === 3), options };
 	}
-	result.lists = core.validateFeed(lists);
 	return result;
 };
 
+function sectionMoves(feed) {
+	let moves = [];
+	if (!feed.ordered) return moves;
+	for (let source in ['main', 'notUnderSanctions']) {
+		let target = source == 'main' ? 'notUnderSanctions' : 'main';
+		let sourceSection = feed.sections[source], targetSection = feed.sections[target];
+		let listKeys = [...listFields];
+		for (let key, option in sourceSection.options)
+			if (option.kind == 'list') push(listKeys, key);
+		for (let key in listKeys) {
+			let generic = index(listFields, key) < 0;
+			let sourceOps = generic ? sourceSection.options[key].entries : sourceSection.lists[key];
+			let targetOps = generic ? targetSection.options[key]?.entries || [] : targetSection.lists[key];
+			let additions = {};
+			for (let op in targetOps)
+				if (!op.remove && !exists(op, 'comment')) additions[op.value] = true;
+			for (let op in sourceOps)
+				if (op.remove && additions[op.value]) push(moves, { source, target, key, value: op.value });
+		}
+	}
+	return moves;
+}
+
 export function selectConfig(input, ignored) {
 	// Проверяем весь файл, даже когда локальная настройка запрещает применять часть полей
-	validateConfig(input);
+	let validated = validateConfig(input);
 	if (type(ignored) != 'array') die('invalid_ignored_options');
 	for (let field in ignored)
-		if (type(field) != 'string' || !match(field, /^(main|settings)\.[a-z][a-z0-9_]{0,63}$/) || match(field, /[[:space:][:cntrl:]]/))
+		if (type(field) != 'string' || !match(field, /^(main|notUnderSanctions|settings)\.[a-z][a-z0-9_]{0,63}$/) || match(field, /[[:space:][:cntrl:]]/))
 			die('invalid_ignored_options');
 	ignored = map(ignored, canonicalField);
 	let selected = { ...input };
@@ -128,13 +158,15 @@ export function selectConfig(input, ignored) {
 			if (index(ignored, 'main.' + key) >= 0) selected[key] = [];
 	}
 	else {
-		for (let group in ['main', 'settings']) {
+		for (let group in configGroups(input)) {
 			selected[group] = {};
 			for (let key, value in input[group])
 				if (index(ignored, canonicalField(group + '.' + key)) < 0) selected[group][key] = value;
 		}
 	}
-	return validateConfig(selected);
+	let result = validateConfig(selected);
+	result.moves = sectionMoves(validated);
+	return result;
 };
 
 function mergeOptions(current, operations, allowDeletes) {
@@ -166,20 +198,82 @@ function mergeOptions(current, operations, allowDeletes) {
 	return { patch, counts };
 }
 
-export function mergeConfig(main, settings, feed, allowDeletes, ignored) {
-	let lists = core.mergeSection(main, feed.lists, allowDeletes);
-	let extra = mergeOptions(main, feed.main, allowDeletes);
-	let global = mergeOptions(settings, feed.settings, allowDeletes);
-	let patches = { main: { ...lists.patch, ...extra.patch }, settings: global.patch };
-	// Не меняем защищённые параметры неявно при включении списка или переходе на URLTest
-	for (let field in ignored || []) {
-		let parts = split(canonicalField(field), '.');
-		let group = parts[0], key = parts[1];
-		if (!exists(patches[group], key)) continue;
-		let current = group == 'main' ? main : settings;
-		if (sprintf('%J', patches[group][key]) != sprintf('%J', current[key])) die('protected_option_required');
-		delete patches[group][key];
+function currentValues(section, key) {
+	let values = section[key] || [];
+	if (type(values) == 'string') values = [values];
+	if (key == 'user_domains' || key == 'user_subnets') values = [...values, ...core.tokens(section[key + '_text'])];
+	if (key == 'urltest_proxy_links' && (!section.connection_type || section.connection_type == 'proxy') &&
+		(section.proxy_config_type || 'url') == 'url' && length(section.proxy_string || '')) values = [...values, section.proxy_string];
+	return values;
+}
+
+function valueIndex(key, values) {
+	let indexed = {};
+	for (let value in values) {
+		try { value = core.normalize(index(listFields, key) < 0 ? 'literal' : key, value); } catch (e) {}
+		indexed[value] = true;
 	}
-	return { patches,
-		counts: { ...lists.counts, main_options: extra.counts, settings: global.counts } };
+	return indexed;
+}
+
+export function mergeConfig(main, settings, feed, allowDeletes, ignored, restricted) {
+	let current = { main, settings, notUnderSanctions: restricted || {} };
+	ignored = map(ignored || [], canonicalField);
+	let activeMoves = [], sourceIndexes = {};
+	for (let move in feed.moves || sectionMoves(feed)) {
+		let field = move.source + '.' + move.key;
+		if (!exists(sourceIndexes, field)) sourceIndexes[field] = valueIndex(move.key, currentValues(current[move.source], move.key));
+		let present = sourceIndexes[field][move.value];
+		if (present && (!allowDeletes || index(ignored, move.source + '.' + move.key) >= 0 || index(ignored, move.target + '.' + move.key) >= 0))
+			die('section_move_blocked');
+		if (present) push(activeMoves, move);
+	}
+	let patches = {}, counts = {};
+	for (let name, section in feed.sections) {
+		let old = current[name];
+		let lists = core.mergeSection(old, section.lists, allowDeletes, section.options);
+		let extra = mergeOptions(old, section.options, allowDeletes);
+		patches[name] = { ...lists.patch, ...extra.patch };
+		for (let key, count in lists.counts) counts[name == 'main' ? key : name + '.' + key] = count;
+		counts[name + '_options'] = extra.counts;
+		let updated = { ...old, ...patches[name] };
+		if (updated.connection_type == 'proxy' && updated.proxy_config_type == 'urltest' && !length(updated.urltest_proxy_links || [])) die('empty_proxy_pool');
+		for (let kind in ['user_domains', 'user_subnets']) {
+			let typeKey = kind == 'user_domains' ? 'user_domain_list_type' : 'user_subnet_list_type';
+			if (length(filter(section.lists[kind], op => exists(op, 'comment'))) &&
+				length(filter(section.lists[kind], op => !op.remove && !exists(op, 'comment'))) && updated[typeKey] != 'text') die('comments_require_text');
+		}
+	}
+	// Перенос не должен удалить рабочий маршрут раньше появления включённого списка и пула в целевой секции
+	let targetIndexes = {};
+	for (let move in activeMoves) {
+		let field = move.target + '.' + move.key;
+		if (!exists(targetIndexes, field)) {
+			let target = { ...current[move.target], ...patches[move.target] };
+			if (target.connection_type != 'proxy' || target.proxy_config_type != 'urltest' || !length(target.urltest_proxy_links || []))
+				die('section_move_blocked');
+			let values = currentValues(target, move.key);
+			if (move.key == 'user_domains' || move.key == 'user_subnets') {
+				let typeKey = move.key == 'user_domains' ? 'user_domain_list_type' : 'user_subnet_list_type';
+				if (target[typeKey] == 'text') values = core.tokens(target[move.key + '_text']);
+				else if (target[typeKey] == 'dynamic') values = target[move.key] || [];
+				else die('section_move_blocked');
+				if (type(values) == 'string') values = [values];
+			}
+			targetIndexes[field] = valueIndex(move.key, values);
+		}
+		if (!targetIndexes[field][move.value]) die('section_move_blocked');
+	}
+	let global = mergeOptions(settings, feed.settings, allowDeletes);
+	patches.settings = global.patch;
+	counts.settings = global.counts;
+	// Не меняем защищённые параметры неявно при включении списка или переходе на URLTest
+	for (let group, patch in patches) {
+		for (let key in keys(patch)) {
+			if (index(ignored, canonicalField(group + '.' + key)) < 0) continue;
+			if (sprintf('%J', patch[key]) != sprintf('%J', current[group][key])) die('protected_option_required');
+			delete patch[key];
+		}
+	}
+	return { patches, counts, order: feed.ordered ? ['notUnderSanctions', 'main'] : null };
 };

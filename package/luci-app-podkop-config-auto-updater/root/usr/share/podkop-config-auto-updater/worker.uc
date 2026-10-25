@@ -81,9 +81,10 @@ function update() {
 	let podkop = cursor();
 	if (!podkop.load('podkop')) die('invalid_podkop');
 	let section = podkop.get_all('podkop', 'main') || {};
-	let merged = mergeConfig(section, podkop.get_all('podkop', 'settings') || {}, feed, config.allow_deletes == '1', ignored);
+	let merged = mergeConfig(section, podkop.get_all('podkop', 'settings') || {}, feed, config.allow_deletes == '1', ignored,
+		podkop.get_all('podkop', 'notUnderSanctions') || {});
 	let changed = applyPatch({ work, config: '/etc/config/podkop', backup: '/tmp/podkop-config-auto-updater/previous-podkop' },
-		merged.patches, original, pending, () => system([helper, 'restart'], 180000) == 0);
+		merged.patches, original, pending, () => system([helper, 'restart'], 180000) == 0, merged.order);
 	status({ state: changed ? 'applied' : 'unchanged', revision: feed.revision, counts: merged.counts });
 }
 

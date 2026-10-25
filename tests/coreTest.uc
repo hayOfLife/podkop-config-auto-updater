@@ -19,10 +19,10 @@ let section = { user_domain_list_type: 'text', user_domains_text: '// manual\nex
 	connection_type: 'proxy', proxy_config_type: 'urltest', urltest_proxy_links: ['vless://test@example.com:443'] };
 let update = feed(['EXAMPLE.com.', 'new.test', { value: 'keep.test', delete: true }]);
 let merged = core.mergeSection(section, update, false);
-check(merged.patch.user_domains_text == 'example.com\nkeep.test\nnew.test', 'keep manual entries and ignore delete');
+check(merged.patch.user_domains_text == '// manual\nexample.com\nkeep.test\nnew.test', 'keep manual entries and comments and ignore delete');
 check(merged.counts.user_domains.pending == 1, 'count disabled deletions');
 merged = core.mergeSection(section, update, true);
-check(merged.patch.user_domains_text == 'example.com\nnew.test', 'apply exact delete');
+check(merged.patch.user_domains_text == '// manual\nexample.com\nnew.test', 'apply exact delete and preserve comments');
 let repeated = core.mergeSection({ ...section, ...merged.patch }, update, true);
 check(length(keys(repeated.patch)) == 0, 'idempotent repeated update');
 check(length(keys(core.mergeSection(section, feed(['example.com']), true).patch)) == 0, 'keep unchanged comments');

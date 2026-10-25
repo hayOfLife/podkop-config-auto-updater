@@ -10,21 +10,32 @@ export function atomicWrite(path, data) {
 	if (!fs.rename(path + '.new', path)) die('write_failed');
 };
 
-export function applyPatch(paths, patches, original, pending, restart) {
-	if (!length(keys(patches.main)) && !length(keys(patches.settings))) return false;
+export function applyPatch(paths, patches, original, pending, restart, order) {
+	let changed = false;
+	for (let section, patch in patches)
+		if (length(keys(patch))) changed = true;
+	if (!changed && !order) return false;
 	if (pending()) die('pending_changes');
 	writePrivate(paths.work + '/podkop', original);
 	let staged = cursor(paths.work, paths.work + '/delta');
 	if (!staged.load('podkop')) die('invalid_podkop');
-	for (let section in ['main', 'settings']) {
+	for (let section in keys(patches)) {
 		if (!length(keys(patches[section]))) continue;
-		let expectedType = section == 'main' ? 'section' : 'settings';
+		let expectedType = section == 'settings' ? 'settings' : 'section';
 		if (!staged.get('podkop', section)) staged.set('podkop', section, expectedType);
 		if (staged.get('podkop', section) != expectedType) die('incompatible_section');
 		for (let key, value in patches[section]) {
 			if (value == null || (type(value) == 'array' && !length(value))) staged.delete('podkop', section, key);
 			else if (!staged.set('podkop', section, key, value)) die('write_failed');
 		}
+	}
+	if (order) {
+		let positions = {}, position = 0;
+		staged.foreach('podkop', null, section => { positions[section['.name']] = position++; });
+		for (let name in order)
+			if (exists(positions, name) && staged.get('podkop', name) != 'section') die('incompatible_section');
+		if (exists(positions, order[0]) && exists(positions, order[1]) && positions[order[0]] > positions[order[1]] &&
+			!staged.reorder('podkop', order[0], positions[order[1]])) die('write_failed');
 	}
 	let route = staged.get('podkop', 'settings', 'download_lists_via_proxy_section');
 	if (staged.get('podkop', 'settings', 'download_lists_via_proxy') == '1' &&

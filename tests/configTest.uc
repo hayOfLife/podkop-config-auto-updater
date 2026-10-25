@@ -3,6 +3,7 @@ import { readfile } from 'fs';
 let passed = 0;
 function check(value, label) { if (!value) die(label); passed++; }
 function rejects(fn, label) { let failed = false; try { fn(); } catch (e) { failed = true; } check(failed, label); }
+function rejectsCode(fn, code, label) { let actual = ''; try { fn(); } catch (e) { actual = split(e.message || '', '\n')[0]; } check(actual == code, label); }
 check(parseConfig('// Заголовок\n{"x": [/* Группа */1, 2]} // Конец').x[1] == 2, 'line and block comments including EOF');
 check(parseConfig('{"url":"https://example.com/a/*b*/", "text":"// keep"}').text == '// keep', 'preserve comment markers inside strings');
 let escaped = { text: 'quote " slash \\ // /* */', url: 'vless://demo@example.com' };
@@ -53,7 +54,7 @@ check(!exists(limited.patches.main, 'user_domains_text') && !exists(limited.patc
 check(!exists(limited.patches.main, 'future_option') && limited.patches.settings.dns_type == 'doh', 'independent fields continue applying');
 check(index(configFields(input), 'main.future_option') >= 0, 'discover future fields without values');
 let textInput = { schema_version: 2, revision: 'text-1', main: { user_domains_text: 'example.com' }, settings: {} };
-check(!length(selectConfig(textInput, ['main.user_domains']).lists.user_domains), 'list checkbox covers text alias');
+check(!length(selectConfig(textInput, ['main.user_domains']).sections.main.lists.user_domains), 'list checkbox covers text alias');
 check(configFields(textInput)[0] == 'main.user_domains', 'text alias displayed as one checkbox');
 let ignoredDelete = selectConfig({ schema_version: 2, revision: 'delete-2', main: {
 	user_domains: [{value: 'example.com', delete: true}] }, settings: {} }, ['main.user_domains']);
@@ -65,5 +66,88 @@ check(mergeConfig({user_domain_list_type: 'text'}, {}, required, true, ['main.us
 rejects(() => selectConfig({...input, settings: {dns_type: 'invalid'}}, ['settings.dns_type']), 'disabled fields still undergo validation');
 rejects(() => selectConfig(input, ['settings.dns_server\ninjected']), 'invalid local selector rejected');
 let legacy = { schema_version: 1, section: 'main', revision: 'legacy', urltest_proxy_links: [], user_domains: ['example.com'], user_subnets: [] };
-check(!length(selectConfig(legacy, ['main.user_domains']).lists.user_domains), 'legacy feeds respect local selection');
+check(!length(selectConfig(legacy, ['main.user_domains']).sections.main.lists.user_domains), 'legacy feeds respect local selection');
+
+let splitInput = { schema_version: 3, revision: 'split-1', main: {
+	user_domains: ['ordinary.example', { value: 'ai.example', delete: true }],
+	community_lists: ['telegram', { value: 'google_ai', delete: true }]
+}, notUnderSanctions: {
+	connection_type: 'proxy', proxy_config_type: 'urltest', urltest_proxy_links: ['vless://second@example.com:443'],
+	user_domains: [{ comment: 'AI services' }, 'ai.example'], community_lists: ['google_ai']
+}, settings: {} };
+let oldMain = { user_domain_list_type: 'text', user_domains_text: '// My devices\nmanual.example\nai.example', community_lists: ['google_ai'] };
+let splitFeed = selectConfig(splitInput, []);
+let splitResult = mergeConfig(oldMain, {}, splitFeed, true);
+check(splitResult.patches.main.user_domains_text == '// My devices\nmanual.example\nordinary.example', 'move keeps unrelated manual values and comments');
+check(splitResult.patches.notUnderSanctions.user_domains_text == '// AI services\nai.example', 'group title reaches Podkop text');
+check(join(',', splitResult.patches.notUnderSanctions.community_lists) == 'google_ai', 'second section community lists');
+check(join(',', splitResult.order) == 'notUnderSanctions,main', 'schema3 requires regional section priority');
+check(index(configFields(splitInput), 'notUnderSanctions.user_domains') >= 0, 'second section checkboxes discovered');
+let splitAgain = mergeConfig({ ...oldMain, ...splitResult.patches.main }, {}, splitFeed, true, [], splitResult.patches.notUnderSanctions);
+check(!length(keys(splitAgain.patches.main)) && !length(keys(splitAgain.patches.notUnderSanctions)), 'two section merge and comments idempotent');
+rejects(() => mergeConfig(oldMain, {}, splitFeed, false), 'cannot partly migrate with deletes disabled');
+rejects(() => mergeConfig(oldMain, {}, selectConfig(splitInput, ['notUnderSanctions.user_domains']), true, ['notUnderSanctions.user_domains']), 'cannot delete source while target checkbox is disabled');
+rejects(() => mergeConfig(oldMain, {}, selectConfig(splitInput, ['main.user_domains']), true, ['main.user_domains']), 'cannot leave source while migrating target');
+let switchedOff = ['main.user_domains', 'notUnderSanctions.user_domains'];
+rejects(() => mergeConfig(oldMain, {}, selectConfig(splitInput, switchedOff), true, switchedOff), 'both disabled fields keep migration atomic');
+let cleanMain = { user_domain_list_type: 'text', user_domains_text: 'manual.example', community_lists: [] };
+check(mergeConfig(cleanMain, {}, splitFeed, false).patches.notUnderSanctions.user_domains_text == '// AI services\nai.example', 'fresh router does not require unrelated deletion permission');
+rejects(() => validateConfig({ ...splitInput, anotherSection: {} }), 'unapproved third section rejected');
+rejects(() => validateConfig({ ...splitInput, notUnderSanctions: null }), 'schema3 requires explicit second section');
+rejects(() => validateConfig({ ...input, main: { user_domains: [{ comment: 'heading' }, 'example.com'] } }), 'old schema does not accept new comment entries');
+rejects(() => validateConfig({ ...splitInput, main: { urltest_proxy_links: [{ comment: 'heading' }] } }), 'comments forbidden in proxies');
+rejects(() => validateConfig({ ...splitInput, main: { user_domains: [{ comment: 'line\ninjection' }] } }), 'multiline title rejected');
+rejects(() => validateConfig({ ...splitInput, main: { user_domains: [{ comment: 'title\u0000hidden' }] } }), 'NUL title rejected explicitly');
+rejects(() => validateConfig({ ...splitInput, main: { user_domains: [{ comment: 'heading', value: 'example.com' }] } }), 'ambiguous title entry rejected');
+let textAliases = { ...splitInput, main: {}, notUnderSanctions: { user_domains_text: 'ai.example' } };
+check(configFields(textAliases)[0] == 'notUnderSanctions.user_domains', 'second section text alias canonical');
+check(!length(selectConfig(textAliases, ['notUnderSanctions.user_domains']).sections.notUnderSanctions.lists.user_domains), 'second section text alias filter');
+let headers = validateConfig({ ...splitInput, main: {}, notUnderSanctions: {
+	user_domains: [{ comment: 'AI' }, 'ai.example', { value: 'remove.example', delete: true }], user_domain_list_type: 'text'
+} });
+let dynamic = { user_domain_list_type: 'dynamic', user_domains: ['local.example', 'remove.example'], user_domains_text: '// Local\nhidden.example' };
+let converted = mergeConfig({}, {}, headers, true, [], dynamic);
+check(converted.patches.notUnderSanctions.user_domain_list_type == 'text' &&
+	converted.patches.notUnderSanctions.user_domains_text == '// Local\nhidden.example\nlocal.example\n// AI\nai.example', 'explicit dynamic to text preserves active and hidden manual data');
+check(join(',', converted.patches.notUnderSanctions.user_domains) == 'local.example', 'conversion removes deleted entry from hidden dynamic representation');
+check(converted.counts['notUnderSanctions.user_domains'].removed == 1, 'conversion counts physical removals once');
+let noType = selectConfig({ ...splitInput, main: {}, notUnderSanctions: { user_domains: [{ comment: 'AI' }, 'ai.example'] } }, []);
+rejects(() => mergeConfig({}, {}, noType, true, [], dynamic), 'comments do not silently convert dynamic lists');
+let protectedType = selectConfig({ ...splitInput, main: {}, notUnderSanctions: { user_domains: [{ comment: 'AI' }, 'ai.example'], user_domain_list_type: 'text' } }, ['notUnderSanctions.user_domain_list_type']);
+rejects(() => mergeConfig({}, {}, protectedType, true, ['notUnderSanctions.user_domain_list_type'], dynamic), 'disabled type checkbox cannot be bypassed by comment conversion');
+let noPool = validateConfig({ ...splitInput, main: {}, notUnderSanctions: { connection_type: 'proxy', proxy_config_type: 'urltest' } });
+rejects(() => mergeConfig({}, {}, noPool, true), 'empty second URLTest rejected after scalar settings');
+let gone = validateConfig({ ...splitInput, main: {}, notUnderSanctions: { user_domains: [{ comment: 'AI' }, { value: 'ai.example', delete: true }] } });
+let cleared = mergeConfig({}, {}, gone, true, [], { user_domain_list_type: 'text', user_domains_text: '// AI\nai.example' });
+check(cleared.patches.notUnderSanctions.user_domains_text == '', 'never write comments-only text fields');
+let noProxyOptions = ['notUnderSanctions.connection_type', 'notUnderSanctions.proxy_config_type', 'notUnderSanctions.urltest_proxy_links'];
+rejects(() => mergeConfig(oldMain, {}, selectConfig(splitInput, noProxyOptions), true, noProxyOptions), 'migration cannot remove source while target proxy options are disabled');
+let inactive = { ...splitInput, notUnderSanctions: { ...splitInput.notUnderSanctions, user_domains: ['ai.example'], user_domain_list_type: 'disabled' } };
+rejects(() => mergeConfig(oldMain, {}, validateConfig(inactive), true), 'migration cannot move rules into disabled target list');
+let standaloneTitle = validateConfig({ ...splitInput, main: {}, notUnderSanctions: { user_domains: [{ comment: 'No values' }] } });
+check(!length(keys(mergeConfig({}, {}, standaloneTitle, true).patches.notUnderSanctions)), 'heading without addresses does not create a section');
+let spacedTitle = validateConfig({ ...splitInput, main: {}, notUnderSanctions: { user_domains: [{ comment: ' AI  ' }, 'ai.example'] } });
+let spacedFirst = mergeConfig({}, {}, spacedTitle, true);
+check(!length(keys(mergeConfig({}, {}, spacedTitle, true, [], spacedFirst.patches.notUnderSanctions).patches.notUnderSanctions)), 'title whitespace does not accumulate duplicate headers');
+for (let name in ['main', 'notUnderSanctions']) {
+	let typeOnly = { schema_version: 3, revision: 'protected-conversion', main: {}, notUnderSanctions: {}, settings: {} };
+	typeOnly[name] = { user_domain_list_type: 'text', user_subnet_list_type: 'text' };
+	let old = { ...dynamic, user_subnet_list_type: 'dynamic', user_subnets: ['192.0.2.0/24'], user_subnets_text: '198.51.100.0/24' };
+	for (let field in ['user_domains', 'user_subnets']) {
+		let blocked = [name + '.' + field];
+		let filtered = selectConfig(typeOnly, blocked);
+		rejectsCode(() => mergeConfig(name == 'main' ? old : {}, {}, filtered, true, blocked, name == 'main' ? {} : old),
+			'protected_option_required', 'implicit text alias cannot bypass ' + name + '.' + field);
+	}
+}
+let activeProxy = 'vless://active@example.test:443';
+let oldUrl = { connection_type: 'proxy', proxy_config_type: 'url', proxy_string: activeProxy, urltest_proxy_links: ['vless://hidden@example.test:443'] };
+let targetPool = { connection_type: 'proxy', proxy_config_type: 'urltest', urltest_proxy_links: ['vless://target@example.test:443'] };
+let proxyMove = { schema_version: 3, revision: 'move-active-url', main: { urltest_proxy_links: [{ value: activeProxy, delete: true }] },
+	notUnderSanctions: { urltest_proxy_links: [activeProxy] }, settings: {} };
+let blockedProxy = ['notUnderSanctions.urltest_proxy_links'];
+rejectsCode(() => mergeConfig(oldUrl, {}, selectConfig(proxyMove, blockedProxy), true, blockedProxy, targetPool),
+	'section_move_blocked', 'active URL cannot be deleted while target proxy list is disabled');
+rejectsCode(() => mergeConfig(oldUrl, {}, selectConfig(proxyMove, []), false, [], targetPool),
+	'section_move_blocked', 'active URL move requires deletion permission');
 printf('config: %d checks passed\n', passed);

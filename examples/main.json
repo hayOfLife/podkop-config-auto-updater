@@ -1,6 +1,6 @@
 {
-  "schema_version": 2,
-  "revision": "demo-only-2026-10-22",
+  "schema_version": 3,
+  "revision": "demo-only-2026-10-25",
   "main": {
     "connection_type": "proxy",
     "proxy_config_type": "urltest",
@@ -9,9 +9,19 @@
       {"value": "trojan://DEMO-NOT-A-PASSWORD@198.51.100.20:443?security=tls&sni=old.example.net#DEMO-OLD-SERVER", "delete": true}
     ],
     "user_domain_list_type": "text",
-    "user_domains": ["example.com", "api.example.net", {"value": "old.example.com", "delete": true}],
+    "user_domains": [
+      {"comment": "Основной демонстрационный сервис"},
+      "example.com",
+      {"value": "api.example.net", "delete": true},
+      {"value": "old.example.com", "delete": true}
+    ],
     "user_subnet_list_type": "text",
-    "user_subnets": ["203.0.113.0/24", "192.0.2.55/32", {"value": "198.51.100.0/24", "delete": true}],
+    "user_subnets": [
+      {"comment": "Демонстрационные IPv4 основной секции"},
+      "203.0.113.0/24",
+      "192.0.2.55/32",
+      {"value": "198.51.100.0/24", "delete": true}
+    ],
     "urltest_check_interval": "3m",
     "urltest_tolerance": "50",
     "urltest_testing_url": "https://check.example.com/generate_204",
@@ -19,6 +29,27 @@
       "https://lists.example.com/domains.txt",
       {"value": "https://old.example.net/domains.txt", "delete": true}
     ]
+  },
+  "notUnderSanctions": {
+    "connection_type": "proxy",
+    "proxy_config_type": "urltest",
+    "urltest_proxy_links": [
+      "vless://00000000-0000-4000-8000-000000000002@192.0.2.20:443?encryption=none&security=tls&sni=one.example.net&type=ws&host=one.example.net&path=%2Fdemo#DEMO-REGIONAL-ONE",
+      "vless://00000000-0000-4000-8000-000000000003@192.0.2.30:443?encryption=none&security=tls&sni=two.example.net&type=ws&host=two.example.net&path=%2Fdemo#DEMO-REGIONAL-TWO"
+    ],
+    "user_domain_list_type": "text",
+    "user_domains": [
+      {"comment": "Демонстрационный сервис с требованиями к региону"},
+      "api.example.net"
+    ],
+    "user_subnet_list_type": "text",
+    "user_subnets": [
+      {"comment": "Демонстрационная IPv4-сеть перенесённого сервиса"},
+      "198.51.100.0/24"
+    ],
+    "urltest_check_interval": "3m",
+    "urltest_tolerance": "50",
+    "urltest_testing_url": "https://check.example.com/generate_204"
   },
   "settings": {
     "dns_type": "doh",

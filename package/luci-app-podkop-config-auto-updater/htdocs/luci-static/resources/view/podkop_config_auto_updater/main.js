@@ -31,6 +31,9 @@ var errors = {
 	download_http_redirect: 'Ссылка возвращает перенаправление. Укажите прямой HTTPS-адрес файла или ссылку GitHub вида /blob/ветка/файл.',
 	download_http_error: 'Сервер вернул неожиданный HTTP-ответ вместо файла конфига. Проверьте ссылку.',
 	invalid_json: 'Файл скачан, но содержит некорректный JSON или незакрытый комментарий.',
+	invalid_comment: 'В заголовке группы доменов или подсетей есть недопустимые символы. Исправьте комментарий в файле конфига.',
+	comments_require_text: 'Для заголовков групп выберите текстовый тип списка доменов или подсетей в Podkop и разрешите применение этого параметра.',
+	section_move_blocked: 'Перенос между main и notUnderSanctions заблокирован локальными настройками. Разрешите применение участвующих списков и автоматические удаления, затем повторите обновление.',
 	invalid_size: 'Скачанный файл пуст или превышает допустимый размер 1 МиБ.',
 	invalid_ignored_options: 'Повреждён локальный список параметров, запрещённых к применению. Пересохраните галочки применения настроек.',
 	protected_option_required: 'Для применения списка требуется изменить защищённый тип списка или подключения. Разрешите применение соответствующего параметра либо заранее настройте его в Podkop.',
@@ -41,8 +44,8 @@ var errors = {
 	rpc_unavailable: 'Не удалось связаться с обработчиком LuCI. Обновите страницу и повторите тест.',
 	pending_changes: 'В Podkop есть несохранённые изменения. Сохраните или отмените их и повторите обновление.',
 	concurrent_change: 'Настройки Podkop изменились во время обновления. Повторите обновление.',
-	empty_proxy_pool: 'Удаление оставило бы секцию без серверов. Настройки сохранены без изменений.',
-	incompatible_section: 'Секция main использует другой тип подключения. Выберите в Podkop Proxy и URLTest.',
+	empty_proxy_pool: 'Секция main или notUnderSanctions осталась бы без серверов URLTest. Настройки сохранены без изменений.',
+	incompatible_section: 'Одна из секций main или notUnderSanctions использует другой тип подключения. Выберите для неё в Podkop Proxy и URLTest.',
 	podkop_missing: 'Сначала установите и настройте Podkop.',
 	restart_failed_restored: 'Podkop не принял изменения. Предыдущая конфигурация восстановлена.',
 	restart_failed_manual_recovery: 'Podkop не запустился, а конфигурация уже изменена вручную. Нужна проверка администратора.',
@@ -145,7 +148,9 @@ return view.extend({
 	},
 	render: function(status) {
 		var map = new form.Map('podkop_config_auto_updater', 'Podkop config auto updater',
-			'Обновляет секцию main и указанные в файле настройки DNS и загрузки списков программы Podkop.');
+			'Обновляет секции main, notUnderSanctions и указанные в файле общие настройки Podkop. ' +
+			'В main используется общий пул серверов, в notUnderSanctions — серверы, отобранные для сервисов с региональными ограничениями. ' +
+			'URLTest проверяет соединение по своему адресу; доступность всех этих сервисов он не проверяет.');
 		var section = map.section(form.NamedSection, 'main', 'settings');
 		section.addremove = false;
 		var option = section.option(form.Flag, 'enabled', 'Работать');
@@ -210,16 +215,19 @@ return view.extend({
 			'settings.update_interval': 'Частота обновления списков',
 			'settings.download_lists_via_proxy_section': 'Скачивать списки через выбранную секцию'
 		};
+		Object.keys(labels).filter(function(field) { return field.indexOf('main.') === 0; }).forEach(function(field) {
+			labels[field.replace(/^main\./, 'notUnderSanctions.')] = labels[field];
+		});
+		function canonicalField(field) {
+			return typeof field === 'string' ? field.replace(/^(main|notUnderSanctions)\.(user_domains|user_subnets)_text$/, '$1.$2') : field;
+		}
 		function ignoredOptions(sectionId) {
 			var value = uci.get('podkop_config_auto_updater', sectionId, 'ignored_options');
-			return (Array.isArray(value) ? value.slice() : (value ? [value] : [])).map(function(field) {
-				return field === 'main.user_domains_text' ? 'main.user_domains' :
-					(field === 'main.user_subnets_text' ? 'main.user_subnets' : field);
-			});
+			return (Array.isArray(value) ? value.slice() : (value ? [value] : [])).map(canonicalField);
 		}
 		var discovered = Array.isArray(status.fields) ? status.fields : [];
-		var fields = Array.from(new Set(Object.keys(labels).concat(discovered, ignoredOptions('main'))))
-			.filter(function(field) { return /^(main|settings)\.[a-z][a-z0-9_]{0,63}$/.test(field); });
+		var fields = Array.from(new Set(Object.keys(labels).concat(discovered, ignoredOptions('main')).map(canonicalField)))
+			.filter(function(field) { return /^(main|notUnderSanctions|settings)\.[a-z][a-z0-9_]{0,63}$/.test(field); });
 		var heading = section.option(form.DummyValue, '_apply_heading', 'Какие настройки применять из конфига');
 		heading.cfgvalue = function() {
 			return 'Все галочки включены по умолчанию. Выключенная галочка сохраняет локальное значение: добавления, замены и удаления этого параметра пропускаются. Отсутствующий в файле параметр ничего не меняет. Новые параметры появятся после успешного теста и обновления страницы.';
@@ -237,7 +245,7 @@ return view.extend({
 			};
 			control.remove = function(sectionId) { this.write(sectionId, '1'); };
 		}
-		[['main.', 'Секция MAIN'], ['settings.', 'Общие настройки Podkop']].forEach(function(group) {
+		[['main.', 'Секция MAIN'], ['notUnderSanctions.', 'Секция notUnderSanctions'], ['settings.', 'Общие настройки Podkop']].forEach(function(group) {
 			var title = section.option(form.DummyValue, '_heading_' + group[0].replace('.', ''), '');
 			title.rawhtml = true;
 			title.cfgvalue = function() { return '<h3>' + group[1] + '</h3>'; };
