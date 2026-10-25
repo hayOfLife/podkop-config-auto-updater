@@ -80,7 +80,7 @@ if (url == 'http://localhost/facts') { write({ clash_api: '127.0.0.1:9090', clas
 if (url == 'http://127.0.0.1:9090/proxies') {
     if (getenv('MOCK_API_DOWN') == '1') exit(7);
     let proxies = load('/fixtures/proxies.json');
-    proxies['notUnderSanctions-out'].now = choice;
+    if (proxies['notUnderSanctions-out']) proxies['notUnderSanctions-out'].now = choice;
     write({ proxies }); exit(0);
 }
 if (url == 'http://127.0.0.1:9090/proxies/notUnderSanctions-out') {
