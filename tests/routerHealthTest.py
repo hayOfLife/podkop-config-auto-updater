@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='podkop-router-health-') as directory:
         target.chmod(0o755 if executable else 0o600)
 
     write('/bin/ucode', '#!/bin/sh\nexec /opt/health-tools/bin/ucode -L /opt/health-tools/lib/ucode "$@"\n', True)
-    write('/bin/curl', '#!/bin/sh\nexec ucode /fixtures/curl.uc "$@"\n', True)
+    write('/bin/curl', '#!/bin/sh\nexec ucode -- /fixtures/curl.uc "$@"\n', True)
     write('/bin/podkop', '#!/bin/sh\n[ "$1" = show_sing_box_config ] || exit 2\ncat /etc/sing-box/config.json\n', True)
 
     fake_curl = r'''
@@ -153,6 +153,18 @@ exit(reply.exit);
             write('/var/run/podkop/config.json', runtime)
             control_socket = socket.socket(socket.AF_UNIX)
             control_socket.bind(str(root / 'var/run/podkop/ctl.sock'))
+        preflight = subprocess.run([shutil.which('chroot'), str(root), '/bin/ucode', '-c', '-o', '/fixtures/curl.ucb',
+                                    '/fixtures/curl.uc'],
+                                   env={**environment, 'LD_LIBRARY_PATH': '/opt/health-tools/lib'},
+                                   capture_output=True, text=True, timeout=5)
+        assert preflight.returncode == 0, ('curl fixture compile failed', preflight.returncode, preflight.stderr)
+        # GNU getopt разбирает флаги после имени скрипта, поэтому обёртка должна передать разделитель --
+        smoke = subprocess.run([shutil.which('chroot'), str(root), '/bin/curl', '--disable', '--silent', '--output',
+                                '/fixtures/smoke.json', 'http://127.0.0.1:9090/proxies'],
+                               env={**environment, 'LD_LIBRARY_PATH': '/opt/health-tools/lib'},
+                               capture_output=True, text=True, timeout=5)
+        assert smoke.returncode == 0, ('curl fixture argument forwarding failed', smoke.returncode)
+        assert group in json.loads((root / 'fixtures/smoke.json').read_text())['proxies']
         return (root / 'etc/config/podkop').read_bytes()
 
     def command(mode='tick', extra=None):
@@ -170,6 +182,17 @@ exit(reply.exit);
         report = json.loads((root / 'tmp/podkop-config-auto-updater/health.json').read_text())
         assert 'private-api-fixture-secret' not in json.dumps(report)
         assert 'body' not in report and 'proxies' not in report
+        if report.get('error') in ['api_unavailable', 'invalid_runtime', 'io_failed']:
+            diagnostics = {'work_files': {path.name: path.stat().st_size for path in work.iterdir() if path.is_file()},
+                           'helper_exits': {}}
+            for action in ['hash', 'discover', 'proxies']:
+                diagnostic = subprocess.run([shutil.which('chroot'), str(root),
+                                             '/usr/libexec/podkop-config-auto-updater/health-io', action,
+                                             '/tmp/podkop-config-auto-updater/work'],
+                                            env={**environment, 'LD_LIBRARY_PATH': '/opt/health-tools/lib', **(extra or {})},
+                                            capture_output=True, text=True, timeout=10)
+                diagnostics['helper_exits'][action] = diagnostic.returncode
+            print('Synthetic health fixture diagnostics: ' + json.dumps(diagnostics), file=sys.stderr)
         return result.returncode, report
 
     def state():
