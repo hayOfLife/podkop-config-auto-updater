@@ -18,8 +18,14 @@ start_service() {
 	procd_close_instance
 }
 
-stop_service() {
-	/usr/libexec/podkop-config-auto-updater/run health-release >/dev/null 2>&1 || true
+service_stopped() {
+	local software_state
+	software_state="$(/usr/libexec/podkop-config-auto-updater/software status 2>/dev/null)" || software_state=''
+	# Установщик удерживает общий lock до окончания postinst и сам запускает новую службу
+	if ucode -e 'let s; try { s = json(ARGV[0]); } catch (e) {} exit(s?.state == "running" && s.target == "self" && s.stage == "installing" ? 0 : 1);' "$software_state"; then
+		return 0
+	fi
+	/usr/libexec/podkop-config-auto-updater/run health-release >/dev/null
 }
 
 service_triggers() {

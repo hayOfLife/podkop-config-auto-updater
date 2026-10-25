@@ -1,4 +1,5 @@
 """Проверяет контроль OpenAI в chroot с подставными curl и локальным API без сетевых запросов"""
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,8 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 install = Path(sys.argv[1]).resolve()
 source = Path('package/luci-app-podkop-config-auto-updater/root').resolve()
@@ -40,7 +43,7 @@ with tempfile.TemporaryDirectory(prefix='podkop-router-health-') as directory:
             copy_binary(library)
 
     shutil.copytree(install, root / 'opt/health-tools')
-    for name in ['sh', 'cat', 'sleep', 'sha256sum']:
+    for name in ['sh', 'cat', 'sleep', 'sha256sum', 'flock', 'mkdir', 'chmod', 'mktemp', 'rm']:
         copy_binary(shutil.which(name), '/bin/' + name)
     for library in (install / 'lib').rglob('*.so*'):
         if library.is_file():
@@ -84,6 +87,7 @@ if (url == 'http://127.0.0.1:9090/proxies') {
     write({ proxies }); exit(0);
 }
 if (url == 'http://127.0.0.1:9090/proxies/notUnderSanctions-out') {
+    if (getenv('MOCK_EXPECT_STOPPED') == '1' && !fs.stat('/fixtures/service-stopped')) exit(97);
     if (getenv('MOCK_SELECT_FAIL') == 'before') exit(7);
     let selected = load(dataFile).name;
     fs.writefile('/fixtures/choice', selected);
@@ -126,8 +130,9 @@ exit(reply.exit);
         for name in ['etc', 'tmp', 'var', 'fixtures', 'usr']:
             shutil.rmtree(root / name, ignore_errors=True)
         shutil.copytree(source, root, dirs_exist_ok=True)
-        # Пакет устанавливает этот helper через INSTALL_BIN
-        (root / 'usr/libexec/podkop-config-auto-updater/health-io').chmod(0o755)
+        # Пакет устанавливает эти файлы через INSTALL_BIN
+        for helper_name in ['health-io', 'run', 'software']:
+            (root / 'usr/libexec/podkop-config-auto-updater' / helper_name).chmod(0o755)
         write('/etc/config/podkop_config_auto_updater', "config settings 'main'\n option enabled '" + enabled + "'\n option openai_check_enabled '" + check + "'\n")
         config = "config settings 'settings'\n option config_path '/etc/sing-box/config.json'\nconfig section 'main'\n option connection_type 'proxy'\n"
         if configured:
@@ -208,6 +213,36 @@ exit(reply.exit);
 
     def reply(status, body=None, exit_code=0):
         return {'status': status, 'exit': exit_code, 'body': body or {'error': {'message': 'Fixture response'}}}
+
+    def stop_service(extra=None, timeout=45):
+        # Последовательность stop соответствует OpenWrt rc.common: stop_service, procd_kill, service_stopped
+        write('/fixtures/stop-service', '''#!/bin/sh
+stop_service() { :; }
+. /etc/init.d/podkop_config_auto_updater
+procd_lock() { :; }
+procd_kill() { printf 'stopped\\n' > /fixtures/service-stopped; }
+procd_lock
+stop_service
+procd_kill podkop_config_auto_updater
+if type service_stopped >/dev/null 2>&1; then service_stopped; fi
+''', True)
+        return subprocess.run([shutil.which('chroot'), str(root), '/fixtures/stop-service'],
+                              env={**environment, 'LD_LIBRARY_PATH': '/opt/health-tools/lib',
+                                   'MOCK_EXPECT_STOPPED': '1', **(extra or {})},
+                              capture_output=True, text=True, timeout=timeout)
+
+    def stop_while_busy(delay):
+        lock = (root / 'tmp/podkop-config-auto-updater/lock').open('w')
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        timer = threading.Timer(delay, lambda: fcntl.flock(lock, fcntl.LOCK_UN))
+        timer.start()
+        try:
+            return stop_service(timeout=delay + 15)
+        finally:
+            timer.cancel()
+            timer.join()
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            lock.close()
 
     for backend in ['stable', 'experimental']:
         original = reset(backend)
@@ -339,6 +374,70 @@ exit(reply.exit);
     write('/fixtures/proxies.json', json.dumps(proxies))
     code, report = command('release')
     assert code == 0 and report['state'] == 'disabled' and state()['owned'] is None, report
+    checks += 1
+
+    reset()
+    command()
+    started = time.monotonic()
+    stopped = stop_while_busy(30)
+    assert stopped.returncode == 0, (stopped.stdout, stopped.stderr)
+    assert time.monotonic() - started >= 29
+    assert (root / 'fixtures/service-stopped').is_file()
+    assert (root / 'fixtures/choice').read_text() == automatic and state()['owned'] is None
+    checks += 1
+
+    reset()
+    command()
+    write('/fixtures/choice', second)
+    stopped = stop_service()
+    assert stopped.returncode == 0 and (root / 'fixtures/choice').read_text() == second
+    assert state()['owned'] is None
+    checks += 1
+
+    reset()
+    command()
+    stopped = stop_service({'MOCK_API_DOWN': '1'})
+    assert stopped.returncode != 0 and state()['owned'] == first
+    checks += 1
+
+    for target, stage in [('self', 'installing'), ('self', 'downloading'), ('podkop', 'installing')]:
+        reset()
+        command()
+        write('/tmp/podkop-config-auto-updater/software.json', json.dumps({'state': 'running', 'target': target, 'stage': stage}))
+        software_lock = (root / 'tmp/podkop-config-auto-updater/software.lock').open('w')
+        fcntl.flock(software_lock, fcntl.LOCK_EX)
+        try:
+            if target == 'self' and stage == 'installing':
+                with (root / 'tmp/podkop-config-auto-updater/lock').open('w') as config_lock:
+                    fcntl.flock(config_lock, fcntl.LOCK_EX)
+                    stopped = stop_service(timeout=5)
+                    assert stopped.returncode == 0, (stopped.stdout, stopped.stderr)
+                    assert state()['owned'] == first and (root / 'fixtures/choice').read_text() == first
+            else:
+                stopped = stop_while_busy(0.3)
+                assert stopped.returncode == 0, (target, stage, stopped.stdout, stopped.stderr)
+                assert state()['owned'] is None and (root / 'fixtures/choice').read_text() == automatic
+        finally:
+            fcntl.flock(software_lock, fcntl.LOCK_UN)
+            software_lock.close()
+        checks += 1
+
+    reset()
+    command()
+    write('/tmp/podkop-config-auto-updater/software.json', '{"state":"running","target":"self","stage":"installing"}')
+    stopped = stop_service()
+    assert stopped.returncode == 0 and (root / 'fixtures/choice').read_text() == automatic
+    assert state()['owned'] is None
+    checks += 1
+
+    reset()
+    command()
+    updater = root / 'etc/config/podkop_config_auto_updater'
+    updater.write_text(updater.read_text().replace("option enabled '1'", "option enabled '0'"))
+    disabled = subprocess.run([shutil.which('chroot'), str(root), '/usr/libexec/podkop-config-auto-updater/run', 'health-tick'],
+                              env={**environment, 'LD_LIBRARY_PATH': '/opt/health-tools/lib'}, capture_output=True, text=True, timeout=15)
+    assert disabled.returncode == 0 and (root / 'fixtures/choice').read_text() == automatic, disabled
+    assert state()['owned'] is None
     checks += 1
 
     if control_socket:

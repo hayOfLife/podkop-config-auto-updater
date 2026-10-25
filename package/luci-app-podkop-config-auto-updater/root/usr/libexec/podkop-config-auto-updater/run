@@ -18,7 +18,7 @@ mkdir -p /tmp/podkop-config-auto-updater
 chmod 700 /tmp/podkop-config-auto-updater
 exec 9>/tmp/podkop-config-auto-updater/lock
 if [ "$1" = health-release ]; then
-	flock -w 25 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
+	flock -w 180 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
 else
 	flock -n 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
 fi
