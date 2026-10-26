@@ -23,8 +23,9 @@ esac
 command -v "$manager" >/dev/null 2>&1 || exit 2
 case "$action" in
 	platform) printf '%s %s\n' "$series" "$format" > "$1/platform" ;;
+	architecture) printf '%s\n' "${DISTRIB_ARCH:-}" > "$1/architecture" ;;
 	version)
-		case "$1" in podkop|luci-app-podkop|luci-i18n-podkop-ru|luci-app-podkop-config-auto-updater) ;; *) exit 2 ;; esac
+		case "$1" in podkop|luci-app-podkop|luci-i18n-podkop-ru|podkop-exp|luci-app-podkop-exp|luci-i18n-podkop-exp-ru|luci-app-podkop-config-auto-updater) ;; *) exit 2 ;; esac
 		if [ "$manager" = opkg ]; then
 			opkg status "$1" 2>/dev/null | sed -n 's/^Version: //p' | sed -n '1p' > "$2/version"
 		else

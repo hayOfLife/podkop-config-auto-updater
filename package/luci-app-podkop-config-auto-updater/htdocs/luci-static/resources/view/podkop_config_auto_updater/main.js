@@ -53,9 +53,12 @@ var errors = {
 	clock_not_ready: 'Проверьте дату и время роутера.',
 	busy: 'Уже выполняется другая операция. Дождитесь её окончания.',
 	unsupported_platform: 'Обновление поддерживается на OpenWrt 24.10 и 25.12.',
+	podkop_package_missing: 'Не найден установленный пакет Podkop или Podkop Experimental. Сначала установите нужную ветку Podkop.',
+	podkop_variant_conflict: 'Одновременно установлены podkop и podkop-exp. Устраните конфликт пакетов вручную; программа не меняет ветку и не удаляет пакеты автоматически.',
+	unsupported_architecture: 'Не удалось определить подходящую архитектуру пакета Podkop Experimental. Установка не запускалась.',
 	podkop_migration_required: 'Для Podkop версии ниже 0.7.0 требуется отдельная миграция настроек. Используйте официальную инструкцию Podkop.',
 	invalid_release: 'Не удалось прочитать сведения об официальном релизе.',
-	missing_package: 'В релизе нет подходящего пакета для этой версии OpenWrt.',
+	missing_package: 'В релизе нет подходящего пакета для этой версии OpenWrt и архитектуры роутера.',
 	invalid_package: 'Не удалось подтвердить адрес или контрольную сумму пакета.',
 	checksum_mismatch: 'Контрольная сумма скачанного пакета не совпала. Установка не запускалась.',
 	backup_failed: 'Не удалось сохранить резервную копию настроек. Установка не запускалась.',
@@ -97,7 +100,8 @@ function readSoftwareStatus() {
 }
 
 function softwareText(status) {
-	var name = status.target === 'podkop' ? 'Podkop' : 'Podkop config auto updater';
+	var name = 'Podkop config auto updater';
+	if (status.target === 'podkop') name = status.variant === 'experimental' ? 'Podkop Experimental' : 'Podkop';
 	var versions = status.installed_version && status.available_version ?
 		' Установлена: ' + status.installed_version + '; доступна: ' + status.available_version + '.' : '';
 	var stages = {checking: 'проверка версии', downloading: 'скачивание пакетов', index: 'подготовка установки', installing: 'установка пакетов'};

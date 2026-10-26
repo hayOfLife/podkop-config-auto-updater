@@ -4,7 +4,8 @@ const target = ARGV[0];
 const work = ARGV[1];
 const helper = work + '/software-io';
 const statusPath = '/tmp/podkop-config-auto-updater/software.json';
-const repository = target == 'self' ? 'hayOfLife/podkop-config-auto-updater' : 'itdoginfo/podkop';
+let repository = target == 'self' ? 'hayOfLife/podkop-config-auto-updater' : 'itdoginfo/podkop';
+let variant;
 let stage = 'checking';
 let releaseVersion;
 let installedVersion;
@@ -16,7 +17,7 @@ function writePrivate(path, data) {
 
 function status(state, extra) {
 	writePrivate(statusPath + '.new', sprintf('%J', {
-		state, target, stage, version: releaseVersion,
+		state, target, stage, variant, version: releaseVersion,
 		installed_version: installedVersion, available_version: availableVersion, ...extra
 	}));
 	if (!fs.rename(statusPath + '.new', statusPath)) die('write_failed');
@@ -67,17 +68,35 @@ try {
 	if (run(['platform', work]) != 0) die('unsupported_platform');
 	let platform = split(trim(fs.readfile(work + '/platform')), ' ');
 	let series = platform[0], format = platform[1];
-	let names = target == 'self' ? ['luci-app-podkop-config-auto-updater'] : ['podkop', 'luci-app-podkop'];
+	let names = ['luci-app-podkop-config-auto-updater'];
 	let installed = {};
-	for (let name in names) installed[name] = version(name);
-	installedVersion = installed[names[0]];
+	let architecture;
 	if (target == 'podkop') {
-		if (!installed.podkop) die('podkop_missing');
-		let parts = split(replace(installed.podkop, /^v/, ''), '.');
-		if (int(parts[0]) == 0 && int(parts[1]) < 7) die('podkop_migration_required');
-		let russian = version('luci-i18n-podkop-ru');
-		if (russian) { push(names, 'luci-i18n-podkop-ru'); installed['luci-i18n-podkop-ru'] = russian; }
+		installed.podkop = version('podkop');
+		installed['podkop-exp'] = version('podkop-exp');
+		if (installed.podkop && installed['podkop-exp']) die('podkop_variant_conflict');
+		if (!installed.podkop && !installed['podkop-exp']) die('podkop_package_missing');
+		variant = installed['podkop-exp'] ? 'experimental' : 'stable';
+		names = variant == 'experimental' ? ['podkop-exp', 'luci-app-podkop-exp'] : ['podkop', 'luci-app-podkop'];
+		installedVersion = installed[names[0]];
+		if (variant == 'experimental') {
+			repository = 'podkop-net/podkop-experimental';
+			if (run(['architecture', work]) != 0) die('unsupported_architecture');
+			architecture = trim(fs.readfile(work + '/architecture') || '');
+			if (!match(architecture, /^[a-z0-9][a-z0-9_-]{0,63}$/) || index(['all', 'noarch'], architecture) >= 0)
+				die('unsupported_architecture');
+			architecture = join('-', split(architecture, '_'));
+		}
+		else {
+			let parts = split(replace(installedVersion, /^v/, ''), '.');
+			if (int(parts[0]) == 0 && int(parts[1]) < 7) die('podkop_migration_required');
+		}
+		installed[names[1]] = version(names[1]);
+		let translation = variant == 'experimental' ? 'luci-i18n-podkop-exp-ru' : 'luci-i18n-podkop-ru';
+		let russian = version(translation);
+		if (russian) { push(names, translation); installed[translation] = russian; }
 	}
+	else { installed[names[0]] = version(names[0]); installedVersion = installed[names[0]]; }
 
 	download('https://api.github.com/repos/' + repository + '/releases/latest', work + '/release.json', 1048576);
 	let release;
@@ -89,29 +108,44 @@ try {
 	let base = 'https://github.com/' + repository + '/releases/download/' + tag + '/';
 	let updates = [];
 	for (let name in names) {
-		let candidates = filter(release.assets, (asset) => {
-			if (type(asset?.name) != 'string') return false;
-			if (target == 'self') return asset.name == name + '-openwrt-' + series + '.' + format;
-			if (index(asset.name, name + '-') != 0 || substr(asset.name, -4) != '.' + format) return false;
-			let value = replace(substr(asset.name, length(name) + 1, length(asset.name) - length(name) - 5), /-all$/, '');
-			return !match(value, /[[:space:][:cntrl:]]/) && match(value, /^v?[0-9]+\.[0-9]+\.[0-9]+(-r[0-9]+)?$/) &&
-				replace(replace(value, /^v/, ''), /-r[0-9]+$/, '') == releaseVersion;
-		});
+		let candidates = [];
+		for (let asset in release.assets) {
+			if (type(asset?.name) != 'string') continue;
+			let expected;
+			if (target == 'self') {
+				if (asset.name != name + '-openwrt-' + series + '.' + format) continue;
+				expected = releaseVersion + '-r1';
+			}
+			else {
+				if (index(asset.name, name + '-') != 0 || substr(asset.name, -4) != '.' + format) continue;
+				expected = substr(asset.name, length(name) + 1, length(asset.name) - length(name) - 5);
+				if (name == 'podkop-exp') {
+					let suffix = '-' + architecture;
+					if (substr(expected, -length(suffix)) != suffix) continue;
+					expected = substr(expected, 0, length(expected) - length(suffix));
+				}
+				else expected = replace(expected, /-all$/, '');
+				if (match(expected, /[[:space:][:cntrl:]]/) || !match(expected, /^v?[0-9]+\.[0-9]+\.[0-9]+(-r[0-9]+)?$/) ||
+					replace(replace(expected, /^v/, ''), /-r[0-9]+$/, '') != releaseVersion) continue;
+			}
+			push(candidates, { asset, expected });
+		}
 		if (length(candidates) != 1) die('missing_package');
-		let asset = candidates[0];
+		let asset = candidates[0].asset, expected = candidates[0].expected;
 		if (asset.browser_download_url != base + asset.name || type(asset.digest) != 'string' ||
 			match(asset.digest, /[[:space:][:cntrl:]]/) || !match(asset.digest, /^sha256:[a-f0-9]{64}$/) ||
 			type(asset.size) != 'int' || asset.size < 1 || asset.size > 67108864) die('invalid_package');
-		let expected = target == 'self' ? releaseVersion + '-r1' :
-			replace(replace(substr(asset.name, length(name) + 1), /\.(ipk|apk)$/, ''), /-all$/, '');
 		let current = installed[name];
+
+		// Версия перевода Experimental задаётся временем сборки и не совпадает с номером в имени файла
+		let exactVersion = name != 'luci-i18n-podkop-exp-ru';
 		if (name == names[0]) availableVersion = expected;
-		if (current && !newer(expected, current)) {
+		if (current && exactVersion && !newer(expected, current)) {
 			// Актуальное ядро Podkop исключает установку остальных пакетов из этого релиза
-			if (name == 'podkop') { status('up_to_date', {}); exit(0); }
+			if (target == 'podkop' && name == names[0]) { status('up_to_date', {}); exit(0); }
 			continue;
 		}
-		push(updates, { name, asset, expected, path: work + '/' + asset.name });
+		push(updates, { name, asset, expected: exactVersion ? expected : null, path: work + '/' + asset.name });
 	}
 	if (!length(updates)) { status('up_to_date', {}); exit(0); }
 
@@ -141,7 +175,7 @@ try {
 	if (run(['install', ...map(updates, (update) => update.path)], 900000) != 0) die('package_install_failed');
 	for (let update in updates) {
 		let current = version(update.name);
-		if (current != update.expected) die('installed_version_mismatch');
+		if (!current || (update.expected != null && current != update.expected)) die('installed_version_mismatch');
 		if (update.name == names[0]) installedVersion = current;
 	}
 	let changed = false;

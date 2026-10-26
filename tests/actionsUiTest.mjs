@@ -68,20 +68,57 @@ for (const failure of ['broken demo_secret_json', null]) {
 	checks++;
 }
 
-for (const [label, target] of [['Обновить подкоп', 'podkop'], ['Обновить себя', 'self']]) {
+for (const [label, target, variant, expected] of [
+	['Обновить подкоп', 'podkop', 'stable', /Podkop обновлён/],
+	['Обновить подкоп', 'podkop', 'experimental', /Podkop Experimental обновлён/],
+	['Обновить себя', 'self', undefined, /Podkop config auto updater обновлён/]
+]) {
 	let finished = false;
-	const app = await fixture((path, args) => Promise.resolve({code: 0, stdout: JSON.stringify({state: finished ? 'updated' : 'running', target, stage: 'checking'})}));
+	const app = await fixture((path, args) => Promise.resolve({code: 0, stdout: JSON.stringify({state: finished ? 'updated' : 'running', target, variant, stage: 'checking'})}));
 	await find(app.tree, label).attributes.click();
 	assert.deepEqual(app.calls.map(call => call[1]), [[target], ['status']]);
 	assert.ok(app.calls.every(call => call[0].endsWith('/software')));
 	assert.match(app.modals.at(-1), /продолжится в фоне/);
+	if (variant === 'experimental') assert.match(app.modals.at(-1), /Podkop Experimental: проверка версии/);
 	finished = true;
 	const timer = [...app.timers.entries()].find(([, interval]) => interval === 3)[0];
 	await timer();
-	assert.match(app.modals.at(-1), /обновлён/);
+	assert.match(app.modals.at(-1), expected);
 	assert.equal(app.timers.has(timer), false);
 	checks++;
 }
+
+for (const [variant, expected] of [[undefined, /Podkop: обновлений нет/], ['stable', /Podkop: обновлений нет/],
+	['experimental', /Podkop Experimental: обновлений нет/]]) {
+	const app = await fixture((path, args) => Promise.resolve({code: 0, stdout: JSON.stringify({
+		state: args[0] === 'status' ? 'up_to_date' : 'running', target: 'podkop', variant,
+		installed_version: '0.8.1-r1', available_version: '0.8.1-r1'
+	})}));
+	await find(app.tree, 'Обновить подкоп').attributes.click();
+	assert.match(app.modals.at(-1), expected);
+	assert.match(app.modals.at(-1), /Установлена: 0\.8\.1-r1; доступна: 0\.8\.1-r1/);
+	assert.deepEqual(app.calls.map(call => call[1]), [['podkop'], ['status']]);
+	checks++;
+}
+
+for (const [error, expected] of [
+	['podkop_package_missing', /Не найден установленный пакет Podkop или Podkop Experimental/],
+	['podkop_variant_conflict', /Одновременно установлены podkop и podkop-exp/],
+	['unsupported_architecture', /архитектуру пакета Podkop Experimental/],
+	['missing_package', /версии OpenWrt и архитектуры роутера/]
+]) {
+	const app = await fixture((path, args) => Promise.resolve({code: args[0] === 'status' ? 1 : 0,
+		stdout: JSON.stringify({state: args[0] === 'status' ? 'error' : 'running', target: 'podkop', variant: 'experimental', error})}));
+	await find(app.tree, 'Обновить подкоп').attributes.click();
+	assert.match(app.modals.at(-1), expected);
+	assert.deepEqual(app.calls.map(call => call[1]), [['podkop'], ['status']]);
+	checks++;
+}
+
+const missingConfig = await fixture(() => Promise.resolve({code: 1, stdout: JSON.stringify({state: 'error', error: 'podkop_missing'})}));
+await find(missingConfig.tree, 'Тест соединения').attributes.click();
+assert.match(missingConfig.modals.at(-1), /Сначала установите и настройте Podkop/);
+checks++;
 
 for (const [result, expected] of [
 	[{code: 1, stdout: '', stderr: "Syntax error: Unable to compile module demo_secret"}, /ошибка компиляции ucode/],
