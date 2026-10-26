@@ -16,7 +16,7 @@ function find(node, label) {
 	for (const child of node?.children || []) { const match = find(child, label); if (match) return match; }
 }
 async function fixture(exec, initial = {}, fields = ['main.future_option', 'settings.dns_server']) {
-	const calls = [], modals = [], timers = new Map(), options = {};
+	const calls = [], modals = [], notifications = [], timers = new Map(), options = {};
 	const settings = {...initial};
 	const enabledNode = element('span', {}, []);
 	let mapDescription;
@@ -36,12 +36,65 @@ async function fixture(exec, initial = {}, fields = ['main.future_option', 'sett
 			unset: (config, section, key) => { delete settings[key]; }},
 		fs: {exec(path, args) { calls.push([path, [...args]]); return exec(path, args); }},
 		ui: {createHandlerFn: (owner, handler) => handler.bind(owner), hideModal() {},
+			addNotification(title, node, type) { notifications.push({text: flatten(node), type}); },
 			showModal(title, content) { modals.push(content.map(flatten).join(' ')); }},
 		poll: {add(fn, interval) { timers.set(fn, interval); }, remove(fn) { timers.delete(fn); }}
 	});
 	const tree = await view.render({enabled: true, software: {state: 'idle'}, fields});
-	return {tree, calls, modals, timers, options, enabledNode, settings, mapDescription};
+	return {tree, calls, modals, notifications, timers, options, enabledNode, settings, mapDescription};
 }
+
+for (const terminal of ['applied', 'unchanged', 'error']) {
+	let current = {state: 'running', stage: 'restarting', operation: 'run.fixture'};
+	let disconnected = false;
+	const app = await fixture((path, args) => disconnected ? Promise.reject(new Error('private_rpc_error')) :
+		Promise.resolve({code: 0, stdout: JSON.stringify(args[0] === 'update-start' ?
+			{state: 'running', operation: 'run.fixture'} : current)}));
+	await find(app.tree, 'Обновить сейчас').attributes.click();
+	assert.deepEqual(app.calls.map(call => call[1]), [['update-start'], ['status']]);
+	assert.match(flatten(app.tree), /Обновление выполняется: перезапуск Podkop/);
+	assert.doesNotMatch(flatten(app.tree), /Обновление произошло|Последние изменения применены/);
+	assert.equal(app.notifications.length, 0);
+	const pollStatus = [...app.timers.entries()].find(([, interval]) => interval === 10)[0];
+	disconnected = true;
+	await pollStatus();
+	assert.match(flatten(app.tree), /Не удалось получить состояние обновления/);
+	assert.equal(app.notifications.length, 0);
+	disconnected = false;
+	current = {state: terminal, operation: 'run.fixture', time: 1793005324, error: 'update_interrupted'};
+	await pollStatus();
+	assert.equal(app.notifications.length, 1);
+	assert.equal(app.notifications[0].type, terminal === 'error' ? 'error' : 'info');
+	assert.match(app.notifications[0].text, terminal === 'error' ? /Применение не подтверждено/ : /Обновление произошло/);
+	assert.doesNotMatch(flatten(app.tree), /private_rpc_error/);
+	await pollStatus();
+	assert.equal(app.notifications.length, 1);
+	checks++;
+}
+
+const busyUpdate = await fixture((path, args) => Promise.resolve({code: 1, stdout: JSON.stringify({state: 'error', error: 'busy'})}));
+await find(busyUpdate.tree, 'Обновить сейчас').attributes.click();
+assert.deepEqual(busyUpdate.calls.map(call => call[1]), [['update-start']]);
+assert.match(busyUpdate.notifications[0].text, /Уже выполняется другая операция/);
+assert.equal(busyUpdate.notifications[0].type, 'error');
+checks++;
+
+const lostUpdate = await fixture(() => Promise.reject(new Error('private_rpc_error')));
+await find(lostUpdate.tree, 'Обновить сейчас').attributes.click();
+assert.match(flatten(lostUpdate.tree), /Результат обновления пока не подтверждён/);
+assert.equal(lostUpdate.notifications.length, 0);
+checks++;
+
+let unrelatedStatus = {state: 'applied', operation: 'run.previous', time: 1793005324};
+const unrelatedUpdate = await fixture((path, args) => Promise.resolve({code: 0, stdout: JSON.stringify(
+	args[0] === 'update-start' ? {state: 'running', operation: 'run.current'} : unrelatedStatus)}));
+await find(unrelatedUpdate.tree, 'Обновить сейчас').attributes.click();
+assert.equal(unrelatedUpdate.notifications.length, 0);
+assert.doesNotMatch(flatten(unrelatedUpdate.tree), /Последние изменения применены|Обновление произошло/);
+unrelatedStatus = {state: 'applied', operation: 'run.current', time: 1793005330};
+await [...unrelatedUpdate.timers.entries()].find(([, interval]) => interval === 10)[0]();
+assert.equal(unrelatedUpdate.notifications.length, 1);
+checks++;
 
 for (const report of [
 	{state: 'tested', downloaded: true, parsed: true, valid: true},

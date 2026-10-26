@@ -52,6 +52,7 @@ var errors = {
 	rollback_restart_failed: 'Конфигурация восстановлена, но Podkop не запустился. Нужна проверка администратора.',
 	clock_not_ready: 'Проверьте дату и время роутера.',
 	busy: 'Уже выполняется другая операция. Дождитесь её окончания.',
+	update_interrupted: 'Обновление конфига прервалось. Применение не подтверждено; проверьте настройки Podkop перед повторным запуском.',
 	unsupported_platform: 'Обновление поддерживается на OpenWrt 24.10 и 25.12.',
 	podkop_package_missing: 'Не найден установленный пакет Podkop или Podkop Experimental. Сначала установите нужную ветку Podkop.',
 	podkop_variant_conflict: 'Одновременно установлены podkop и podkop-exp. Устраните конфликт пакетов вручную; программа не меняет ветку и не удаляет пакеты автоматически.',
@@ -87,8 +88,9 @@ function showTestResult(result, successful) {
 
 function readStatus() {
 	return fs.exec(runner, ['status']).then(function(result) {
-		try { return JSON.parse(result.stdout || '{}'); }
-		catch (error) { return {}; }
+		var status = JSON.parse(result.stdout || 'null');
+		if (result.code || !status || typeof status !== 'object' || Array.isArray(status)) throw new Error('status_unavailable');
+		return status;
 	});
 }
 
@@ -122,6 +124,12 @@ function showSoftwareResult(status) {
 
 function statusText(status) {
 	var text = '';
+	if (status.state === 'running') {
+		var stages = {starting: 'запуск', downloading: 'скачивание и проверка файла',
+			preparing: 'подготовка настроек', restarting: 'перезапуск Podkop'};
+		return 'Обновление выполняется: ' + (stages[status.stage] || 'ожидание завершения') +
+			'. Итог ещё не получен. Страницу можно закрыть; операция продолжится на роутере.';
+	}
 	if (status.next_run && status.enabled)
 		text += ' Следующее обновление: ' + new Date(status.next_run * 1000).toLocaleString() + ' (время вашего браузера).';
 	if (status.state === 'applied') text += ' Последние изменения применены.';
@@ -303,14 +311,37 @@ return view.extend({
 
 		var statusNode = E('p', {role: 'status', style: 'white-space: pre-line'}, statusText(status));
 		var healthNode = E('p', {id: 'podkop-updater-openai-status', role: 'status', style: 'white-space: pre-line'}, healthText(status));
+		var updateOperation = status.state === 'running' ? status.operation : null;
+		function refreshConfig(current) {
+			healthNode.textContent = healthText(current);
+			refreshEnabled(current);
+			if (updateOperation && current.operation !== updateOperation) {
+				statusNode.textContent = 'Ожидается результат запущенного обновления. Полученный статус относится к другой операции.';
+				return;
+			}
+			statusNode.textContent = statusText(current);
+			button.disabled = current.state === 'running';
+			if (updateOperation && current.operation === updateOperation &&
+				['applied', 'unchanged', 'error'].indexOf(current.state) >= 0) {
+				updateOperation = null;
+				ui.addNotification(null, E('p', {}, statusText(current)), current.state === 'error' ? 'error' : 'info');
+			}
+		}
 		var button = E('button', {class: 'cbi-button cbi-button-action', type: 'button',
+			disabled: status.state === 'running' ? true : null,
 			click: ui.createHandlerFn(this, function() {
-				return fs.exec(runner, ['update']).then(function(result) {
-					return readStatus().then(function(current) {
-						statusNode.textContent = statusText(current);
-						healthNode.textContent = healthText(current);
-						ui.addNotification(null, E('p', {}, statusText(current)), result.code ? 'error' : 'info');
-					});
+				return fs.exec(runner, ['update-start']).then(function(result) {
+					var report;
+					try { report = JSON.parse(result.stdout || '{}'); } catch (error) { report = {}; }
+					if (result.code !== 0 || report.state !== 'running' || typeof report.operation !== 'string') {
+						ui.addNotification(null, E('p', {}, errors[report.error] || 'Не удалось запустить обновление конфига.'), 'error');
+						return;
+					}
+					updateOperation = report.operation;
+					statusNode.textContent = statusText(report);
+					return readStatus().then(refreshConfig);
+				}).catch(function() {
+					statusNode.textContent = 'Связь с роутером временно недоступна. Результат обновления пока не подтверждён; проверка состояния продолжится.';
 				});
 			})}, 'Обновить сейчас');
 		var testButton = E('button', {class: 'cbi-button cbi-button-neutral', type: 'button',
@@ -362,11 +393,8 @@ return view.extend({
 		var selfButton = E('button', {class: 'cbi-button cbi-button-action', type: 'button',
 			click: ui.createHandlerFn(this, function() { return startSoftware('self'); })}, 'Обновить себя');
 		if (softwareActive) poll.add(refreshSoftware, 3);
-		poll.add(function() { return readStatus().then(function(current) {
-			statusNode.textContent = statusText(current);
-			healthNode.textContent = healthText(current);
-			refreshEnabled(current);
-		}).catch(function() {
+		poll.add(function() { return readStatus().then(refreshConfig).catch(function() {
+			statusNode.textContent = 'Не удалось получить состояние обновления с роутера. Проверка состояния продолжится.';
 			healthNode.textContent = 'Контроль OpenAI: не удалось получить состояние с роутера.';
 		}); }, 10);
 		return map.render().then(function(formNode) {

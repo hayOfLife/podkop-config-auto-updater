@@ -82,7 +82,8 @@ case "$action" in
 					}
 				' "$work/connections.json" "$port" "$selected" >> "$work/proof" 2>/dev/null || true
 			fi
-			sleep 0.2
+			# BusyBox в OpenWrt может не поддерживать дробные секунды у команды sleep
+			ucode -e 'sleep(200);'
 		done
 		result=0
 		wait "$probe_pid" || result="$?"

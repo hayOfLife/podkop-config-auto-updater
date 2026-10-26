@@ -1,9 +1,14 @@
 #!/bin/sh
 set -eu
 umask 077
+runtime=/tmp/podkop-config-auto-updater
+mkdir -p "$runtime"
+chmod 700 "$runtime"
 case "${1:-}" in
 	status)
-		ucode -e 'import { readfile } from "fs"; import { cursor } from "uci"; function load(path) { try { return json(readfile(path)) || {}; } catch(e) { return {}; } } let s = load("/tmp/podkop-config-auto-updater/status.json"); let p = load("/tmp/podkop-config-auto-updater/schedule.json"); let c = cursor(); s.enabled = c.get("podkop_config_auto_updater", "main", "enabled") == "1"; s.openai_check_enabled = c.get("podkop_config_auto_updater", "main", "openai_check_enabled") != "0"; s.health = load("/tmp/podkop-config-auto-updater/health.json"); s.ipv6_error = !!readfile("/tmp/podkop-config-auto-updater/ipv6-error"); s.next_run = p.next; s.fields = load("/tmp/podkop-config-auto-updater/fields.json").fields || []; print(sprintf("%J\n", s));'
+		exec 8>"$runtime/update.lock"
+		if flock -n 8; then active=0; else active=1; fi
+		ucode -e 'import { readfile } from "fs"; import { cursor } from "uci"; function load(path) { try { return json(readfile(path)) || {}; } catch(e) { return {}; } } let s = load("/tmp/podkop-config-auto-updater/status.json"); if (s.state == "running" && ARGV[0] == "0") { s.state = "error"; s.error = "update_interrupted"; } let p = load("/tmp/podkop-config-auto-updater/schedule.json"); let c = cursor(); s.enabled = c.get("podkop_config_auto_updater", "main", "enabled") == "1"; s.openai_check_enabled = c.get("podkop_config_auto_updater", "main", "openai_check_enabled") != "0"; s.health = load("/tmp/podkop-config-auto-updater/health.json"); s.ipv6_error = !!readfile("/tmp/podkop-config-auto-updater/ipv6-error"); s.next_run = p.next; s.fields = load("/tmp/podkop-config-auto-updater/fields.json").fields || []; print(sprintf("%J\n", s));' "$active"
 		exit 0 ;;
 	daemon)
 		while :; do
@@ -11,12 +16,16 @@ case "${1:-}" in
 			"$0" health-tick >/dev/null 2>&1 || true
 			sleep 30
 		done ;;
-	update|tick|test|health-tick|health-release) ;;
+	update|update-start|tick|test|health-tick|health-release) ;;
 	*) exit 2 ;;
 esac
-mkdir -p /tmp/podkop-config-auto-updater
-chmod 700 /tmp/podkop-config-auto-updater
-exec 9>/tmp/podkop-config-auto-updater/lock
+case "$1" in
+	update|update-start|tick)
+		exec 8>"$runtime/update.lock"
+		flock -n 8 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
+		;;
+esac
+exec 9>"$runtime/lock"
 if [ "$1" = health-release ]; then
 	flock -w 180 9 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
 else
@@ -25,6 +34,18 @@ fi
 work="$(mktemp -d /tmp/podkop-config-auto-updater/run.XXXXXX)"
 trap 'rm -rf -- "$work"' EXIT HUP INT TERM
 mkdir "$work/delta"
+if [ "$1" = update-start ]; then
+	ucode -e 'import { writefile, rename } from "fs"; let path = "/tmp/podkop-config-auto-updater/status.json"; let s = { state: "running", stage: "starting", operation: ARGV[0] }; let data = sprintf("%J", s); if (writefile(path + ".new", data) !== length(data) || !rename(path + ".new", path)) exit(1);' "${work##*/}"
+	(
+		trap 'rm -rf -- "$work"' EXIT
+		ucode -L /usr/share/podkop-config-auto-updater /usr/share/podkop-config-auto-updater/worker.uc update "$work"
+	) </dev/null >/dev/null 2>&1 &
+	# Фоновый процесс удерживает обе блокировки до завершения применения
+	trap - EXIT HUP INT TERM
+	exec 8>&- 9>&-
+	printf '{"state":"running","operation":"%s"}\n' "${work##*/}"
+	exit 0
+fi
 case "$1" in
 	health-tick|health-release)
 		ucode -L /usr/share/podkop-config-auto-updater /usr/share/podkop-config-auto-updater/health-worker.uc "${1#health-}" "$work"

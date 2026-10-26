@@ -191,6 +191,67 @@ esac
     assert metadata == {'fields': ['main.user_domains']}
     checks += 1
 
+    def wait_config():
+        for attempt in range(200):
+            code, report = command('run', 'status')
+            if report.get('state') != 'running':
+                return report
+            time.sleep(0.05)
+        raise AssertionError('Configuration update did not finish')
+
+    for restart_fails in [False, True]:
+        reset()
+        write('/etc/init.d/podkop', '''#!/bin/sh
+printf 'restart\\n' >> /fixtures/calls
+ucode -e 'import { stat } from "fs"; while (!stat("/fixtures/continue")) sleep(20);'
+exit ''' + ('1' if restart_fails else '0') + '\n', True)
+        original = (root / 'etc/config/podkop').read_bytes()
+        code, started = command('run', 'update-start')
+        assert code == 0 and started['state'] == 'running' and started['operation'].startswith('run.'), started
+        for attempt in range(200):
+            code, report = command('run', 'status')
+            if report.get('stage') == 'restarting':
+                break
+            time.sleep(0.05)
+        assert report['state'] == 'running' and report['stage'] == 'restarting', report
+        assert report['operation'] == started['operation']
+        code, busy = command('run', 'update-start')
+        assert code == 1 and busy == {'state': 'error', 'error': 'busy'}, busy
+        code, during = command('run', 'status')
+        assert during['state'] == 'running' and during['operation'] == started['operation'], during
+        write('/fixtures/continue', '')
+        finished = wait_config()
+        assert finished['operation'] == started['operation'], finished
+        if restart_fails:
+            assert finished['state'] == 'error' and finished['error'] == 'rollback_restart_failed', finished
+            assert (root / 'etc/config/podkop').read_bytes() == original
+        else:
+            assert finished['state'] == 'applied' and finished['revision'] == 'demo', finished
+            assert finished['time'] >= during['time']
+            assert 'example.com' in (root / 'etc/config/podkop').read_text()
+            command('run', 'update-start')
+            assert wait_config()['state'] == 'unchanged'
+            assert (root / 'fixtures/calls').read_text() == 'restart\n'
+        checks += 1
+
+    reset()
+    write('/tmp/podkop-config-auto-updater/status.json', '{"state":"running","stage":"restarting","operation":"run.interrupted"}')
+    code, interrupted = command('run', 'status')
+    assert code == 0 and interrupted['state'] == 'error' and interrupted['error'] == 'update_interrupted', interrupted
+    assert interrupted['operation'] == 'run.interrupted'
+    checks += 1
+
+    reset()
+    write('/etc/init.d/podkop', '#!/bin/sh\nexit 0\n', True)
+    write('/tmp/.uci/podkop', 'pending manual settings')
+    original = (root / 'etc/config/podkop').read_bytes()
+    code, started = command('run', 'update-start')
+    failed = wait_config()
+    assert failed['state'] == 'error' and failed['error'] == 'pending_changes', failed
+    assert failed['operation'] == started['operation']
+    assert (root / 'etc/config/podkop').read_bytes() == original
+    checks += 1
+
     for scenario in ['apply', 'deletes_disabled', 'target_disabled', 'invalid_comment']:
         reset()
         write('/etc/init.d/podkop', '#!/bin/sh\nprintf "restart\\n" >> /fixtures/calls\nexit 0\n', True)

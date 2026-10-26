@@ -14,6 +14,7 @@
       "ubus": {"file": ["exec"]},
       "file": {
         "/usr/libexec/podkop-config-auto-updater/run update": ["exec"],
+        "/usr/libexec/podkop-config-auto-updater/run update-start": ["exec"],
         "/usr/libexec/podkop-config-auto-updater/run test": ["exec"],
         "/usr/libexec/podkop-config-auto-updater/software podkop": ["exec"],
         "/usr/libexec/podkop-config-auto-updater/software self": ["exec"]

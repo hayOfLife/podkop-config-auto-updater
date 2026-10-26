@@ -20,11 +20,13 @@ if (!testing) {
 }
 
 function status(result) {
+	let parts = split(work, '/');
+	result.operation = parts[length(parts) - 1];
 	result.time = time();
 	result.enabled = config.enabled == '1';
 	result.next_run = schedule?.next || null;
 	atomicWrite(statusPath, sprintf('%J', result));
-	print(sprintf('%J\n', result));
+	if (result.state != 'running') print(sprintf('%J\n', result));
 }
 
 function pending() {
@@ -74,7 +76,9 @@ function fetchFeed() {
 function update() {
 	if (!fs.stat('/etc/init.d/podkop')) die('podkop_missing');
 	if (pending()) die('pending_changes');
+	status({ state: 'running', stage: 'downloading' });
 	let feed = fetchFeed();
+	status({ state: 'running', stage: 'preparing', revision: feed.revision });
 
 	let original = fs.readfile('/etc/config/podkop');
 	if (!original) die('podkop_missing');
@@ -84,7 +88,10 @@ function update() {
 	let merged = mergeConfig(section, podkop.get_all('podkop', 'settings') || {}, feed, config.allow_deletes == '1', ignored,
 		podkop.get_all('podkop', 'notUnderSanctions') || {});
 	let changed = applyPatch({ work, config: '/etc/config/podkop', backup: '/tmp/podkop-config-auto-updater/previous-podkop' },
-		merged.patches, original, pending, () => system([helper, 'restart'], 180000) == 0, merged.order);
+		merged.patches, original, pending, () => {
+			status({ state: 'running', stage: 'restarting', revision: feed.revision });
+			return system([helper, 'restart'], 180000) == 0;
+		}, merged.order);
 	status({ state: changed ? 'applied' : 'unchanged', revision: feed.revision, counts: merged.counts });
 }
 

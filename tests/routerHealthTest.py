@@ -45,6 +45,7 @@ with tempfile.TemporaryDirectory(prefix='podkop-router-health-') as directory:
     shutil.copytree(install, root / 'opt/health-tools')
     for name in ['sh', 'cat', 'sleep', 'sha256sum', 'flock', 'mkdir', 'chmod', 'mktemp', 'rm']:
         copy_binary(shutil.which(name), '/bin/' + name)
+    (root / 'bin/sleep').rename(root / 'bin/integer-sleep')
     for library in (install / 'lib').rglob('*.so*'):
         if library.is_file():
             copy_binary(library)
@@ -61,6 +62,11 @@ with tempfile.TemporaryDirectory(prefix='podkop-router-health-') as directory:
         target.chmod(0o755 if executable else 0o600)
 
     write('/bin/ucode', '#!/bin/sh\nexec /opt/health-tools/bin/ucode -L /opt/health-tools/lib/ucode "$@"\n', True)
+    # Воспроизводим BusyBox без поддержки дробных секунд
+    write('/bin/sleep', '''#!/bin/sh
+case "${1:-}" in ''|*[!0-9]*) exit 1 ;; esac
+exec /bin/integer-sleep "$@"
+''', True)
     write('/bin/curl', '#!/bin/sh\nexec ucode -- /fixtures/curl.uc "$@"\n', True)
     write('/bin/podkop', '#!/bin/sh\n[ "$1" = show_sing_box_config ] || exit 2\ncat /etc/sing-box/config.json\n', True)
 
@@ -115,7 +121,7 @@ if (getenv('MOCK_ROUTE') != 'missing') fs.writefile('/fixtures/active', sprintf(
 }));
 append('/fixtures/probes', choice + '\n');
 fs.writefile(output, type(reply.body) == 'string' ? reply.body : sprintf('%J', reply.body));
-system(['sleep', '0.8']);
+sleep(800);
 fs.unlink('/fixtures/active');
 if (getenv('MOCK_EXTERNAL_AFTER')) fs.writefile('/fixtures/choice', getenv('MOCK_EXTERNAL_AFTER'));
 print(sprintf('%03d\n198.18.0.42\n192.168.2.1\n', reply.status));
