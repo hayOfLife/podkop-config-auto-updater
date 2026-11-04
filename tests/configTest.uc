@@ -204,4 +204,16 @@ rejectsCode(() => mergeConfig(nativeCurrent.main, nativeCurrent.settings, select
 let nativeChangedFilter = { ...nativeInput, members: { ...nativeInput.members, nas_provider: { ...nativeInput.members.nas_provider, include: ['France'] } } };
 let changedFilter = mergeConfig(nativeAgain.main, nativeAgain.settings, selectConfig(nativeChangedFilter, []), true, [], nativeAgain.notUnderSanctions, nativeAgain);
 check(join(',', changedFilter.patches.nas_provider.include) == 'France', 'native include filters replace rather than append old countries');
+for (let oldFeed in [validateConfig(input), validateConfig(splitInput), validateConfig(legacy)])
+	rejectsCode(() => mergeConfig({}, { config_version: '2' }, oldFeed, true), 'experimental_config_required', 'legacy schema cannot silently write obsolete native options');
+let noRuleInput = { ...nativeInput, main: {}, notUnderSanctions: {}, settings: {}, replace_members: [] };
+let nativeEmpty = { settings: { '.type': 'settings', config_version: '2' } };
+rejectsCode(() => mergeConfig({}, nativeEmpty.settings, selectConfig(noRuleInput, []), true, [], {}, nativeEmpty),
+	'invalid_native_reference', 'native member cannot target a missing empty rule');
+let createdRulesInput = { ...noRuleInput, main: { enabled: '1' }, notUnderSanctions: { enabled: '1' } };
+let createdRules = mergeConfig({}, nativeEmpty.settings, selectConfig(createdRulesInput, []), true, [], {}, nativeEmpty);
+check(createdRules.patches.main.enabled == '1' && createdRules.patches.notUnderSanctions.enabled == '1', 'nonempty native rule patches create declared member targets');
+let stolenMember = { ...nativeCurrent, main_provider: { '.type': 'member', section: 'other', source: 'old_source', role: 'server' } };
+rejectsCode(() => mergeConfig(nativeCurrent.main, nativeCurrent.settings, nativeFeed, true, [], {}, stolenMember),
+	'native_section_collision', 'native member id cannot steal another rule membership');
 printf('config: %d checks passed\n', passed);

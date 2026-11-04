@@ -20,6 +20,7 @@ export function applyPatch(paths, patches, original, pending, restart, order, na
 	writePrivate(paths.work + '/podkop', original);
 	let staged = cursor(paths.work, paths.work + '/delta');
 	if (!staged.load('podkop')) die('invalid_podkop');
+	if (!native && staged.get('podkop', 'settings', 'config_version') == '2') die('experimental_config_required');
 	if (native) {
 		if (staged.get('podkop', 'settings', 'config_version') != '2') die('experimental_version_required');
 		for (let name in native.delete_sections) {
@@ -31,6 +32,8 @@ export function applyPatch(paths, patches, original, pending, restart, order, na
 	for (let section in keys(patches)) {
 		if (!length(keys(patches[section]))) continue;
 		let expectedType = native?.types[section] || (section == 'settings' ? 'settings' : 'section');
+		if (native && expectedType == 'member' && staged.get('podkop', section) == 'member' &&
+			index(['main', 'notUnderSanctions'], staged.get('podkop', section, 'section')) < 0) die('native_section_collision');
 		if (!staged.get('podkop', section)) staged.set('podkop', section, expectedType);
 		if (staged.get('podkop', section) != expectedType) die('incompatible_section');
 		for (let key, value in patches[section]) {
@@ -46,7 +49,7 @@ export function applyPatch(paths, patches, original, pending, restart, order, na
 		if (exists(positions, order[0]) && exists(positions, order[1]) && positions[order[0]] > positions[order[1]] &&
 			!staged.reorder('podkop', order[0], positions[order[1]])) die('write_failed');
 	}
-	if (native) validateNativeCursor(staged);
+	if (native) validateNativeCursor(staged, native);
 	else {
 		let route = staged.get('podkop', 'settings', 'download_lists_via_proxy_section');
 		if (staged.get('podkop', 'settings', 'download_lists_via_proxy') == '1' &&

@@ -97,6 +97,19 @@ let nativeCollision = nativeOriginal + "config section 'provider'\n option manua
 writePrivate(paths.config, nativeCollision);
 rejects(() => applyPatch(paths, nativeMerged.patches, nativeCollision, () => false, () => true, nativeMerged.order, nativeMerged.native), 'native transaction refuses source name collision');
 check(fs.readfile(paths.config) == nativeCollision, 'native type collision leaves config unchanged');
+writePrivate(paths.config, nativeOriginal);
+rejects(() => applyPatch(paths, patch, nativeOriginal, () => false, () => true), 'legacy transaction refuses native configuration');
+check(fs.readfile(paths.config) == nativeOriginal, 'legacy refusal preserves native sources and members');
+let missingNativeRule = replace(nativeOriginal, "config section 'main'\n", '');
+writePrivate(paths.config, missingNativeRule);
+rejects(() => applyPatch(paths, { ...nativeMerged.patches, main: {} }, missingNativeRule, () => false, () => true,
+	nativeMerged.order, nativeMerged.native), 'native transaction rejects member targeting missing rule');
+check(fs.readfile(paths.config) == missingNativeRule, 'missing native target does not partially apply subscriptions');
+let otherRuleMember = nativeOriginal + "config member 'main_provider'\n option section 'other'\n option role 'server'\n option source 'old_source'\n";
+writePrivate(paths.config, otherRuleMember);
+rejects(() => applyPatch(paths, nativeMerged.patches, otherRuleMember, () => false, () => true,
+	nativeMerged.order, nativeMerged.native), 'native transaction cannot steal an unrelated member id');
+check(fs.readfile(paths.config) == otherRuleMember, 'unrelated member id collision preserves original file');
 let request = sourceRequest('https://github.com/example/config/blob/main/config/main.json', 'test_token');
 check(request.url == 'https://api.github.com/repos/example/config/contents/config/main.json?ref=main', 'convert GitHub file link');
 check(index(request.headers, 'Bearer test_token') >= 0, 'GitHub authorization header');

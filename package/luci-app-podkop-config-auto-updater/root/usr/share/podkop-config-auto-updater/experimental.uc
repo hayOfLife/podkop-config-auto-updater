@@ -106,6 +106,7 @@ export function mergeNative(native, current, allowDeletes, ignored) {
 		for (let name, values in native[group]) {
 			let old = current[name] || {};
 			if (old['.type'] && old['.type'] != expected) die('native_section_collision');
+			if (expected == 'member' && old['.type'] == 'member' && index(rules, old.section) < 0) die('native_section_collision');
 			let patch = {};
 			for (let key, value in values) if (!sameOption(key, old[key], value)) { patch[key] = value; counts.added++; }
 			if (length(keys(patch))) { patches[name] = patch; types[name] = expected; }
@@ -147,12 +148,20 @@ export function mergeNative(native, current, allowDeletes, ignored) {
 	for (let name, values in original.members)
 		if (!effective[name] || effective[name]['.type'] != 'member' || effective[name].section != values.section) die('protected_option_required');
 	for (let rule in native.replace_members) if (!routable[rule]) die('native_empty_membership');
-	return { patches, types, delete_sections: removed, replace_members: native.replace_members, counts, routable };
+	return { patches, types, delete_sections: removed, replace_members: native.replace_members,
+		member_names: keys(original.members), counts, routable };
 };
 
-export function validateNativeCursor(staged) {
+export function validateNativeCursor(staged, native) {
 	if (staged.get('podkop', 'settings') != 'settings' || staged.get('podkop', 'settings', 'config_version') != '2')
 		die('experimental_version_required');
+	for (let name in native.member_names || []) {
+		let member = staged.get_all('podkop', name);
+		if (member?.['.type'] != 'member' || index(rules, member.section) < 0 || staged.get('podkop', member.section) != 'section' ||
+			!filled(staged.get_all('podkop', member.source)) ||
+			(member.via && (!filled(staged.get_all('podkop', member.via)) || member.via == member.source)))
+			die('invalid_native_reference');
+	}
 	let route = staged.get('podkop', 'settings', 'download_lists_via_proxy_section');
 	if (staged.get('podkop', 'settings', 'download_lists_via_proxy') != '1') return;
 	if (!route || staged.get('podkop', route) != 'section') die('invalid_proxy_section');

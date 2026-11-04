@@ -236,6 +236,7 @@ function valueIndex(key, values) {
 export function mergeConfig(main, settings, feed, allowDeletes, ignored, restricted, nativeCurrent) {
 	let current = { main, settings, notUnderSanctions: restricted || {} };
 	ignored = map(ignored || [], canonicalField);
+	if (!feed.native && settings.config_version == '2') die('experimental_config_required');
 	let native = feed.native ? mergeNative(feed.native, nativeCurrent, allowDeletes, ignored) : null;
 	let activeMoves = [], sourceIndexes = {};
 	for (let move in feed.moves || sectionMoves(feed)) {
@@ -295,6 +296,11 @@ export function mergeConfig(main, settings, feed, allowDeletes, ignored, restric
 		}
 	}
 	if (native) {
+		for (let name, member in (feed.native.original || feed.native).members) {
+			let old = nativeCurrent[member.section] || {};
+			if (old['.type'] && old['.type'] != 'section') die('native_section_collision');
+			if (!old['.type'] && !length(keys(patches[member.section] || {}))) die('invalid_native_reference');
+		}
 		for (let name, patch in native.patches) patches[name] = patch;
 		counts.native = native.counts;
 	}
