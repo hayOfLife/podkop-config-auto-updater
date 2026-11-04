@@ -1,15 +1,17 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
 import { atomicWrite, writePrivate } from 'transaction';
-import { classifyProbe, planProbe } from 'health';
+import { classifyProbe, planProbe, safeProxyTag } from 'health';
 
 const base = '/tmp/podkop-config-auto-updater';
 const helper = '/usr/libexec/podkop-config-auto-updater/health-io';
 const groupTag = 'notUnderSanctions-out';
 const work = ARGV[1];
 const mode = ARGV[0];
-let config = cursor().get_all('podkop_config_auto_updater', 'main') || {};
-let section = cursor().get_all('podkop', 'notUnderSanctions') || {};
+let podkop = cursor();
+let config = podkop.get_all('podkop_config_auto_updater', 'main') || {};
+let section = podkop.get_all('podkop', 'notUnderSanctions') || {};
+const native = podkop.get('podkop', 'settings', 'config_version') == '2';
 let state;
 let fingerprint;
 
@@ -18,8 +20,19 @@ function load(path) {
 }
 
 function safeTag(value) {
-	return type(value) == 'string' && length(value) <= 128 && index(value, '\u0000') < 0 &&
-		!match(value, /[[:space:][:cntrl:]]/) && match(value, /^notUnderSanctions-[A-Za-z0-9_-]+$/);
+	return safeProxyTag(value, native);
+}
+
+function configured() {
+	if (section['.type'] != 'section') return false;
+	if (!native) return section.connection_type == 'proxy' && section.proxy_config_type == 'urltest' &&
+		length(section.urltest_proxy_links || []) > 0;
+	let found = false;
+	podkop.foreach('podkop', 'member', row => {
+		if (row.section == 'notUnderSanctions' && type(row.source) == 'string' &&
+			podkop.get('podkop', row.source) == 'source') found = true;
+	});
+	return found;
 }
 
 function emptyState() {
@@ -90,7 +103,8 @@ function snapshot(optional) {
 	let group = type(proxies) == 'object' ? proxies[groupTag] : null;
 	if (optional && type(proxies) == 'object' && (!group || lc(group.type || '') != 'selector'))
 		return { proxies, group: null, pool: [] };
-	if (!group || lc(group.type || '') != 'selector' || type(group.all) != 'array' || !safeTag(group.now))
+	if (!group || lc(group.type || '') != 'selector' || type(group.all) != 'array' || !safeTag(group.now) ||
+		index(group.all, group.now) < 0)
 		die('invalid_runtime');
 	let pool = [], seen = {};
 	for (let tag in group.all) {
@@ -160,7 +174,8 @@ function randomPort() {
 
 function probe(selected) {
 	report('checking');
-	if (system([helper, 'probe', work, '' + randomPort(), selected], 28000) != 0) die('io_failed');
+	writePrivate(work + '/probe-selected.json', sprintf('%J', { name: selected }));
+	if (system([helper, 'probe', work, '' + randomPort()], 28000) != 0) die('io_failed');
 	let after = snapshot();
 	if (after.group.now != state.owned) die('selection_changed');
 	let metrics = split(fs.readfile(work + '/probe-metrics') || '', '\n');
@@ -247,8 +262,7 @@ try {
 		release('disabled');
 		exit(0);
 	}
-	let links = section.urltest_proxy_links || [];
-	if (section['.type'] != 'section' || section.connection_type != 'proxy' || section.proxy_config_type != 'urltest' || !length(links)) {
+	if (!configured()) {
 		state.next_check = 0;
 		report('not_configured');
 		exit(0);

@@ -1,3 +1,9 @@
+export function safeProxyTag(value, native) {
+	if (type(value) != 'string' || !length(value) || length(value) > (native ? 1024 : 128) ||
+		index(value, '\u0000') >= 0 || match(value, /[[:cntrl:]]/)) return false;
+	return native || (!match(value, /[[:space:]]/) && match(value, /^notUnderSanctions-[A-Za-z0-9_-]+$/));
+};
+
 export function classifyProbe(curlExit, httpStatus, body) {
 	if (index([51, 60, 77], curlExit) >= 0) return 'unknown';
 	if (curlExit !== 0) {

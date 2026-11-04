@@ -36,6 +36,18 @@ var errors = {
 	section_move_blocked: 'Перенос между main и notUnderSanctions заблокирован локальными настройками. Разрешите применение участвующих списков и автоматические удаления, затем повторите обновление.',
 	invalid_size: 'Скачанный файл пуст или превышает допустимый размер 1 МиБ.',
 	invalid_ignored_options: 'Повреждён локальный список параметров, запрещённых к применению. Пересохраните галочки применения настроек.',
+	experimental_version_required: 'Этот конфиг требует установленного Podkop Experimental 0.8.8 с новым форматом источников. Обновите Podkop и дождитесь штатной миграции его настроек.',
+	invalid_native_sections: 'Проверьте имена и структуру источников подписок и строк серверов в экспериментальном конфиге.',
+	invalid_native_option: 'В настройке источника или строки серверов неверный тип либо недопустимые символы.',
+	invalid_native_source: 'Проверьте HTTPS-ссылку, тип и интервал обновления источника подписки.',
+	invalid_native_member: 'Проверьте секцию, источник и роль строки серверов.',
+	invalid_native_filter: 'Фильтр имён серверов должен быть списком непустых строк без повторений.',
+	invalid_native_membership: 'Заменять привязки серверов разрешено только для main и notUnderSanctions.',
+	invalid_native_reference: 'Строка серверов ссылается на отсутствующий источник подписки.',
+	invalid_native_rule: 'В правиле Experimental найдены устаревшие настройки отдельного прокси. Используйте источники подписок и строки серверов нового формата.',
+	native_section_collision: 'Имя источника или строки серверов уже занято секцией другого типа в Podkop.',
+	native_empty_membership: 'После замены в правиле не осталось бы привязок к источникам подписок.',
+	native_membership_delete_disabled: 'Для перехода на подписки включите автоматическое применение удалений: требуется заменить прежние привязки серверов управляемых правил.',
 	protected_option_required: 'Для применения списка требуется изменить защищённый тип списка или подключения. Разрешите применение соответствующего параметра либо заранее настройте его в Podkop.',
 	runtime_incompatible: 'Обработчик теста не запустился: ошибка компиляции ucode. Обновите Podkop config auto updater до совместимой версии.',
 	worker_failed: 'Обработчик теста завершился без результата. Выполните в SSH: /usr/libexec/podkop-config-auto-updater/run test.',
@@ -181,7 +193,8 @@ function healthText(status) {
 	var text = disabled ? disabled + ' Не удалось завершить последнее действие контроля. Возврат прежнего выбора не подтверждён.' :
 		'Контроль OpenAI: ' + (Object.prototype.hasOwnProperty.call(messages, health.state) ? messages[health.state] : 'Проверка ещё не выполнялась.');
 	if (health.state === 'error' && Object.prototype.hasOwnProperty.call(details, health.error)) text += ' ' + details[health.error];
-	if (typeof health.selected === 'string' && /^notUnderSanctions-[0-9]+-out$/.test(health.selected))
+	if (typeof health.selected === 'string' && !health.selected.includes('://') &&
+		(/^notUnderSanctions-[0-9]+-out$/.test(health.selected) || /^[A-Za-z_][A-Za-z0-9_]{0,63}: [^\u0000-\u001f\u007f]{1,440}$/.test(health.selected)))
 		text += ' Узел: ' + health.selected + '.';
 	if (Number.isFinite(health.checked_at) && health.checked_at > 0)
 		text += '\nПоследняя проверка: ' + new Date(health.checked_at * 1000).toLocaleString('ru-RU') + ' (время вашего браузера).';
@@ -270,7 +283,15 @@ return view.extend({
 			'settings.bootstrap_dns_server': 'Bootstrap DNS-сервер',
 			'settings.download_lists_via_proxy': 'Скачивать списки через Proxy/VPN',
 			'settings.update_interval': 'Частота обновления списков',
-			'settings.download_lists_via_proxy_section': 'Скачивать списки через выбранную секцию'
+			'settings.download_lists_via_proxy_section': 'Скачивать списки через выбранную секцию',
+			'settings.config_version': 'Формат настроек Podkop Experimental',
+			'settings.urltest_check_interval': 'Интервал проверки серверов',
+			'settings.urltest_tolerance': 'Допуск проверки серверов',
+			'settings.urltest_testing_url': 'URLTest ссылка для проверки',
+			'settings.urltest_download_check': 'Проверка загрузки серверов',
+			'settings.urltest_download_url': 'Адрес проверки загрузки серверов',
+			'membership.main': 'Заменять привязки серверов правила',
+			'membership.notUnderSanctions': 'Заменять привязки серверов правила'
 		};
 		Object.keys(labels).filter(function(field) { return field.indexOf('main.') === 0; }).forEach(function(field) {
 			labels[field.replace(/^main\./, 'notUnderSanctions.')] = labels[field];
@@ -284,13 +305,19 @@ return view.extend({
 		}
 		var discovered = Array.isArray(status.fields) ? status.fields : [];
 		var fields = Array.from(new Set(Object.keys(labels).concat(discovered, ignoredOptions('main')).map(canonicalField)))
-			.filter(function(field) { return /^(main|notUnderSanctions|settings)\.[a-z][a-z0-9_]{0,63}$/.test(field); });
+			.filter(function(field) { return /^(main|notUnderSanctions|settings)\.[a-z][a-z0-9_]{0,63}$/.test(field) ||
+				/^(sources|members)\.[A-Za-z_][A-Za-z0-9_]{0,63}\.[a-z][a-z0-9_]{0,63}$/.test(field) ||
+				/^membership\.(main|notUnderSanctions)$/.test(field); });
 		var heading = section.option(form.DummyValue, '_apply_heading', 'Какие настройки применять из конфига');
 		heading.cfgvalue = function() {
 			return 'Все галочки включены по умолчанию. Выключенная галочка сохраняет локальное значение: добавления, замены и удаления этого параметра пропускаются. Отсутствующий в файле параметр ничего не меняет. Новые параметры появятся после успешного теста и обновления страницы.';
 		};
 		function addField(field) {
-			var control = section.option(form.Flag, '_apply_' + field.replace('.', '_'), labels[field] || field);
+			var parts = field.split('.');
+			var nativeLabels = {type: 'Тип источника', label: 'Название', url: 'Ссылка на подписку', update_interval: 'Интервал обновления подписки',
+				section: 'Правило', source: 'Источник', role: 'Роль', include: 'Имя содержит', exclude: 'Имя не содержит', via: 'Подключаться через'};
+			var label = labels[field] || (parts.length === 3 ? parts[1] + ': ' + (nativeLabels[parts[2]] || parts[2]) : field);
+			var control = section.option(form.Flag, '_apply_' + field.replace(/\./g, '_'), label);
 			control.default = '1';
 			control.rmempty = false;
 			control.cfgvalue = function(sectionId) { return ignoredOptions(sectionId).indexOf(field) < 0 ? '1' : '0'; };
@@ -302,11 +329,12 @@ return view.extend({
 			};
 			control.remove = function(sectionId) { this.write(sectionId, '1'); };
 		}
-		[['main.', 'Секция MAIN'], ['notUnderSanctions.', 'Секция notUnderSanctions'], ['settings.', 'Общие настройки Podkop']].forEach(function(group) {
+		[['main.', 'Секция MAIN'], ['notUnderSanctions.', 'Секция notUnderSanctions'], ['settings.', 'Общие настройки Podkop'],
+			['sources.', 'Источники подписок Experimental'], ['members.', 'Фильтры и строки серверов Experimental']].forEach(function(group) {
 			var title = section.option(form.DummyValue, '_heading_' + group[0].replace('.', ''), '');
 			title.rawhtml = true;
 			title.cfgvalue = function() { return '<h3>' + group[1] + '</h3>'; };
-			fields.filter(function(field) { return field.indexOf(group[0]) === 0; }).forEach(addField);
+			fields.filter(function(field) { return field.indexOf(group[0]) === 0 || field === 'membership.' + group[0].slice(0, -1); }).forEach(addField);
 		});
 
 		var statusNode = E('p', {role: 'status', style: 'white-space: pre-line'}, statusText(status));

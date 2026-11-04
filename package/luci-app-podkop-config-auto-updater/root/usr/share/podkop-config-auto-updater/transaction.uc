@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
+import { validateNativeCursor } from 'experimental';
 
 export function writePrivate(path, data) {
 	if (fs.writefile(path, data) !== length(data) || !fs.chmod(path, 0600)) die('write_failed');
@@ -10,8 +11,8 @@ export function atomicWrite(path, data) {
 	if (!fs.rename(path + '.new', path)) die('write_failed');
 };
 
-export function applyPatch(paths, patches, original, pending, restart, order) {
-	let changed = false;
+export function applyPatch(paths, patches, original, pending, restart, order, native) {
+	let changed = length(native?.delete_sections || []) > 0;
 	for (let section, patch in patches)
 		if (length(keys(patch))) changed = true;
 	if (!changed && !order) return false;
@@ -19,9 +20,17 @@ export function applyPatch(paths, patches, original, pending, restart, order) {
 	writePrivate(paths.work + '/podkop', original);
 	let staged = cursor(paths.work, paths.work + '/delta');
 	if (!staged.load('podkop')) die('invalid_podkop');
+	if (native) {
+		if (staged.get('podkop', 'settings', 'config_version') != '2') die('experimental_version_required');
+		for (let name in native.delete_sections) {
+			if (staged.get('podkop', name) != 'member' || index(native.replace_members, staged.get('podkop', name, 'section')) < 0)
+				die('invalid_native_membership');
+			if (!staged.delete('podkop', name)) die('write_failed');
+		}
+	}
 	for (let section in keys(patches)) {
 		if (!length(keys(patches[section]))) continue;
-		let expectedType = section == 'settings' ? 'settings' : 'section';
+		let expectedType = native?.types[section] || (section == 'settings' ? 'settings' : 'section');
 		if (!staged.get('podkop', section)) staged.set('podkop', section, expectedType);
 		if (staged.get('podkop', section) != expectedType) die('incompatible_section');
 		for (let key, value in patches[section]) {
@@ -37,10 +46,13 @@ export function applyPatch(paths, patches, original, pending, restart, order) {
 		if (exists(positions, order[0]) && exists(positions, order[1]) && positions[order[0]] > positions[order[1]] &&
 			!staged.reorder('podkop', order[0], positions[order[1]])) die('write_failed');
 	}
-	let route = staged.get('podkop', 'settings', 'download_lists_via_proxy_section');
-	if (staged.get('podkop', 'settings', 'download_lists_via_proxy') == '1' &&
-		(!route || staged.get('podkop', route) != 'section' ||
-		index(['proxy', 'vpn'], staged.get('podkop', route, 'connection_type')) < 0)) die('invalid_proxy_section');
+	if (native) validateNativeCursor(staged);
+	else {
+		let route = staged.get('podkop', 'settings', 'download_lists_via_proxy_section');
+		if (staged.get('podkop', 'settings', 'download_lists_via_proxy') == '1' &&
+			(!route || staged.get('podkop', route) != 'section' ||
+			index(['proxy', 'vpn'], staged.get('podkop', route, 'connection_type')) < 0)) die('invalid_proxy_section');
+	}
 	if (!staged.commit('podkop')) die('write_failed');
 	let updated = fs.readfile(paths.work + '/podkop');
 	if (updated == original) return false;

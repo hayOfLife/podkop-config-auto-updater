@@ -85,13 +85,15 @@ function update() {
 	let podkop = cursor();
 	if (!podkop.load('podkop')) die('invalid_podkop');
 	let section = podkop.get_all('podkop', 'main') || {};
+	let nativeCurrent = {};
+	if (feed.native) podkop.foreach('podkop', null, entry => { nativeCurrent[entry['.name']] = entry; });
 	let merged = mergeConfig(section, podkop.get_all('podkop', 'settings') || {}, feed, config.allow_deletes == '1', ignored,
-		podkop.get_all('podkop', 'notUnderSanctions') || {});
+		podkop.get_all('podkop', 'notUnderSanctions') || {}, nativeCurrent);
 	let changed = applyPatch({ work, config: '/etc/config/podkop', backup: '/tmp/podkop-config-auto-updater/previous-podkop' },
 		merged.patches, original, pending, () => {
 			status({ state: 'running', stage: 'restarting', revision: feed.revision });
 			return system([helper, 'restart'], 180000) == 0;
-		}, merged.order);
+		}, merged.order, merged.native);
 	status({ state: changed ? 'applied' : 'unchanged', revision: feed.revision, counts: merged.counts });
 }
 

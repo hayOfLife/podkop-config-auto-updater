@@ -1,0 +1,86 @@
+{
+  "schema_version": 4,
+  "revision": "demo-only-experimental-2026-11-04",
+  "main": {
+    "enabled": "1",
+    "user_domain_list_type": "text",
+    "user_domains": [
+      {"comment": "Основной демонстрационный сервис"},
+      "example.com"
+    ],
+    "user_subnet_list_type": "text",
+    "user_subnets": [
+      {"comment": "Демонстрационные IPv4 основной секции"},
+      "192.0.2.0/24"
+    ]
+  },
+  "notUnderSanctions": {
+    "enabled": "1",
+    "user_domain_list_type": "text",
+    "user_domains": [
+      {"comment": "Демонстрационный сервис с требованиями к региону"},
+      "api.example.net"
+    ],
+    "user_subnet_list_type": "text",
+    "user_subnets": [
+      {"comment": "Демонстрационные IPv4 сервиса"},
+      "198.51.100.0/24"
+    ]
+  },
+  "settings": {
+    "config_version": "2",
+    "dns_type": "doh",
+    "dns_server": "dns.example.com/dns-query",
+    "bootstrap_dns_server": "192.0.2.53",
+    "download_lists_via_proxy": "1",
+    "download_lists_via_proxy_section": "main",
+    "update_interval": "1d",
+    "urltest_check_interval": "3m",
+    "urltest_tolerance": "50",
+    "urltest_testing_url": "https://check.example.com/generate_204",
+    "urltest_download_check": "default"
+  },
+  "sources": {
+    "demo_one": {
+      "type": "subscription",
+      "label": "Демонстрационная подписка 1",
+      "url": "https://provider.example.com/subscriptions/demo-one",
+      "update_interval": "1d"
+    },
+    "demo_two": {
+      "type": "subscription",
+      "label": "Демонстрационная подписка 2",
+      "url": "https://provider.example.net/subscriptions/demo-two",
+      "update_interval": "1d"
+    }
+  },
+  "members": {
+    "main_demo_one": {
+      "section": "main",
+      "source": "demo_one",
+      "role": "server",
+      "exclude": ["Обход"]
+    },
+    "main_demo_two": {
+      "section": "main",
+      "source": "demo_two",
+      "role": "server",
+      "exclude": ["Обход"]
+    },
+    "nas_demo_one": {
+      "section": "notUnderSanctions",
+      "source": "demo_one",
+      "role": "server",
+      "include": ["🇩🇪", "Германия", "Germany", "🇺🇸", "США", "United States", "USA"],
+      "exclude": ["Обход", "MIX", "test", "тест", "🇷🇺", "🇧🇾"]
+    },
+    "nas_demo_two": {
+      "section": "notUnderSanctions",
+      "source": "demo_two",
+      "role": "server",
+      "include": ["🇩🇪", "Германия", "Germany", "🇺🇸", "США", "United States", "USA"],
+      "exclude": ["Обход", "MIX", "test", "тест", "🇷🇺", "🇧🇾"]
+    }
+  },
+  "replace_members": ["main", "notUnderSanctions"]
+}

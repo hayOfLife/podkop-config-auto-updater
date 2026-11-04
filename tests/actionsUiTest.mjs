@@ -381,4 +381,27 @@ const disconnectedText = flatten(disconnected.tree.children.find(node => node?.a
 assert.match(disconnectedText, /не удалось получить состояние с роутера/);
 assert.doesNotMatch(disconnectedText, /demo_secret/);
 checks++;
+const experimentalFields = await fixture(() => Promise.resolve({code: 0, stdout: '{}'}), {}, [
+	'sources.provider.url', 'members.nas_provider.include', 'members.nas_provider.exclude',
+	'membership.notUnderSanctions', 'sources.invalid-id.url', 'other.provider.url'
+]);
+assert.equal(experimentalFields.options._apply_sources_provider_url.title, 'provider: Ссылка на подписку');
+assert.equal(experimentalFields.options._apply_members_nas_provider_include.title, 'nas_provider: Имя содержит');
+assert.equal(experimentalFields.options._apply_members_nas_provider_exclude.title, 'nas_provider: Имя не содержит');
+assert.equal(experimentalFields.options._apply_membership_notUnderSanctions.default, '1');
+assert.equal(experimentalFields.options['_apply_sources_invalid-id_url'], undefined);
+assert.equal(experimentalFields.options._apply_other_provider_url, undefined);
+experimentalFields.options._apply_sources_provider_url.write('main', '0');
+assert.deepEqual([...experimentalFields.settings.ignored_options], ['sources.provider.url']);
+checks++;
+
+for (const [selected, visible] of [['provider: 🇩🇪 Germany', true], ['vless://demo_secret@example.test:443', false]]) {
+	const app = await fixture(() => Promise.resolve({stdout: JSON.stringify({enabled: true,
+		openai_check_enabled: true, health: {state: 'healthy', selected}})}));
+	await [...app.timers.entries()].find(([, interval]) => interval === 10)[0]();
+	const text = flatten(app.tree.children.find(node => node?.attributes?.id === 'podkop-updater-openai-status'));
+	assert.equal(text.includes(selected), visible);
+	checks++;
+}
+
 console.log(`LuCI actions: ${checks} command routing, popup, selection and background completion scenarios passed`);

@@ -1,8 +1,14 @@
 import * as core from 'core';
+import { validateNative, nativeFields, selectNative, mergeNative } from 'experimental';
 
 const listFields = ['urltest_proxy_links', 'user_domains', 'user_subnets'];
 const settingsFields = ['dns_type', 'dns_server', 'bootstrap_dns_server', 'download_lists_via_proxy',
 	'update_interval', 'download_lists_via_proxy_section'];
+const nativeSettingsFields = ['config_version', 'urltest_check_interval', 'urltest_tolerance',
+	'urltest_testing_url', 'urltest_download_check', 'urltest_download_url'];
+const oldExitFields = ['connection_type', 'proxy_config_type', 'proxy_string', 'outbound_json', 'selector_proxy_links',
+	'urltest_proxy_links', 'urltest_fallback_links', 'enable_udp_over_tcp', 'detour', 'interface', 'group',
+	'urltest_check_interval', 'urltest_tolerance', 'urltest_testing_url', 'urltest_download_check', 'urltest_download_url'];
 
 export function parseConfig(text) {
 	let chunks = [], start = 0, quoted = false;
@@ -42,7 +48,7 @@ function canonicalField(field) {
 }
 
 function configGroups(input) {
-	return input.schema_version === 3 ? ['main', 'notUnderSanctions', 'settings'] : ['main', 'settings'];
+	return input.schema_version >= 3 ? ['main', 'notUnderSanctions', 'settings'] : ['main', 'settings'];
 }
 
 export function configFields(input) {
@@ -50,6 +56,7 @@ export function configFields(input) {
 	let fields = [];
 	for (let group in configGroups(input))
 		for (let key in keys(input[group])) push(fields, canonicalField(group + '.' + key));
+	if (input.schema_version === 4) fields = [...fields, ...nativeFields(input)];
 	return fields;
 };
 
@@ -72,18 +79,24 @@ function validateSetting(key, value) {
 	if (key == 'download_lists_via_proxy_section' && !match(value, /^[A-Za-z0-9_]+$/)) die('invalid_proxy_section');
 	if ((key == 'dns_server' || key == 'bootstrap_dns_server') &&
 		!match(value, /^[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~%/?=&+-]*)?$/)) die('invalid_dns_server');
+	if (key == 'config_version' && value != '2') die('experimental_version_required');
+	if (key == 'urltest_check_interval' && !match(value, /^[1-9][0-9]{0,5}[smhd]$/)) die('invalid_setting');
+	if (key == 'urltest_tolerance' && (!match(value, /^[0-9]{1,5}$/) || int(value) > 60000)) die('invalid_setting');
+	if ((key == 'urltest_testing_url' || key == 'urltest_download_url') && !match(value, /^https?:\/\/[^[:space:]]+$/)) die('invalid_setting');
+	if (key == 'urltest_download_check' && index(['default', 'off', 'custom'], value) < 0) die('invalid_setting');
 }
 
 export function validateConfig(input) {
 	if (input?.schema_version === 1)
 		return { sections: { main: { lists: core.validateFeed(input), options: {} } }, settings: {}, revision: input.revision };
-	if (type(input) != 'object' || (input.schema_version !== 2 && input.schema_version !== 3) || type(input.main) != 'object' || type(input.settings) != 'object' ||
-		(input.schema_version === 3 && type(input.notUnderSanctions) != 'object'))
+	if (type(input) != 'object' || index([2, 3, 4], input.schema_version) < 0 || type(input.main) != 'object' || type(input.settings) != 'object' ||
+		(input.schema_version >= 3 && type(input.notUnderSanctions) != 'object'))
 		die('invalid_schema');
+	let native = input.schema_version === 4 ? validateNative(input) : null;
 	let groups = configGroups(input);
 	for (let key in keys(input))
-		if (index(['schema_version', 'revision', ...groups], key) < 0) die('unknown_field');
-	let result = { sections: {}, settings: {}, revision: input.revision, ordered: input.schema_version === 3 };
+		if (index(['schema_version', 'revision', ...groups, ...(native ? ['sources', 'members', 'replace_members'] : [])], key) < 0) die('unknown_field');
+	let result = { sections: {}, settings: {}, revision: input.revision, ordered: input.schema_version >= 3, native };
 	for (let group in groups) {
 		let lists = { schema_version: 1, section: 'main', revision: input.revision,
 			urltest_proxy_links: [], user_domains: [], user_subnets: [] };
@@ -91,7 +104,8 @@ export function validateConfig(input) {
 		if (length(keys(input[group])) > 256) die('too_many_options');
 		for (let key, value in input[group]) {
 			if (index(key, '\u0000') >= 0 || match(key, /[[:space:][:cntrl:]]/) || !match(key, /^[a-z][a-z0-9_]{0,63}$/)) die('invalid_option_name');
-			if (group == 'settings' && index(settingsFields, key) < 0) die('unsupported_setting');
+			if (group == 'settings' && index([...settingsFields, ...(native ? nativeSettingsFields : [])], key) < 0) die('unsupported_setting');
+			if (native && group != 'settings' && index(oldExitFields, key) >= 0) die('invalid_native_rule');
 			if (group != 'settings' && index(listFields, key) >= 0) { lists[key] = value; continue; }
 			if (group != 'settings' && index(['user_domains_text', 'user_subnets_text'], key) >= 0) {
 				let canonical = replace(key, /_text$/, '');
@@ -116,7 +130,7 @@ export function validateConfig(input) {
 			}
 		}
 		if (group == 'settings') result.settings = options;
-		else result.sections[group] = { lists: core.validateFeed(lists, input.schema_version === 3), options };
+		else result.sections[group] = { lists: core.validateFeed(lists, input.schema_version >= 3), options };
 	}
 	return result;
 };
@@ -149,7 +163,9 @@ export function selectConfig(input, ignored) {
 	let validated = validateConfig(input);
 	if (type(ignored) != 'array') die('invalid_ignored_options');
 	for (let field in ignored)
-		if (type(field) != 'string' || !match(field, /^(main|notUnderSanctions|settings)\.[a-z][a-z0-9_]{0,63}$/) || match(field, /[[:space:][:cntrl:]]/))
+		if (type(field) != 'string' || (!match(field, /^(main|notUnderSanctions|settings)\.[a-z][a-z0-9_]{0,63}$/) &&
+			!match(field, /^(sources|members)\.[A-Za-z_][A-Za-z0-9_]{0,63}\.[a-z][a-z0-9_]{0,63}$/) &&
+			!match(field, /^membership\.(main|notUnderSanctions)$/)) || match(field, /[[:space:][:cntrl:]]/))
 			die('invalid_ignored_options');
 	ignored = map(ignored, canonicalField);
 	let selected = { ...input };
@@ -165,6 +181,7 @@ export function selectConfig(input, ignored) {
 		}
 	}
 	let result = validateConfig(selected);
+	if (validated.native) result.native = selectNative(validated.native, ignored);
 	result.moves = sectionMoves(validated);
 	return result;
 };
@@ -216,9 +233,10 @@ function valueIndex(key, values) {
 	return indexed;
 }
 
-export function mergeConfig(main, settings, feed, allowDeletes, ignored, restricted) {
+export function mergeConfig(main, settings, feed, allowDeletes, ignored, restricted, nativeCurrent) {
 	let current = { main, settings, notUnderSanctions: restricted || {} };
 	ignored = map(ignored || [], canonicalField);
+	let native = feed.native ? mergeNative(feed.native, nativeCurrent, allowDeletes, ignored) : null;
 	let activeMoves = [], sourceIndexes = {};
 	for (let move in feed.moves || sectionMoves(feed)) {
 		let field = move.source + '.' + move.key;
@@ -237,7 +255,7 @@ export function mergeConfig(main, settings, feed, allowDeletes, ignored, restric
 		for (let key, count in lists.counts) counts[name == 'main' ? key : name + '.' + key] = count;
 		counts[name + '_options'] = extra.counts;
 		let updated = { ...old, ...patches[name] };
-		if (updated.connection_type == 'proxy' && updated.proxy_config_type == 'urltest' && !length(updated.urltest_proxy_links || [])) die('empty_proxy_pool');
+		if (!native && updated.connection_type == 'proxy' && updated.proxy_config_type == 'urltest' && !length(updated.urltest_proxy_links || [])) die('empty_proxy_pool');
 		for (let kind in ['user_domains', 'user_subnets']) {
 			let typeKey = kind == 'user_domains' ? 'user_domain_list_type' : 'user_subnet_list_type';
 			if (length(filter(section.lists[kind], op => exists(op, 'comment'))) &&
@@ -250,7 +268,8 @@ export function mergeConfig(main, settings, feed, allowDeletes, ignored, restric
 		let field = move.target + '.' + move.key;
 		if (!exists(targetIndexes, field)) {
 			let target = { ...current[move.target], ...patches[move.target] };
-			if (target.connection_type != 'proxy' || target.proxy_config_type != 'urltest' || !length(target.urltest_proxy_links || []))
+			if (native ? (!native.routable[move.target] || target.enabled == '0') :
+				(target.connection_type != 'proxy' || target.proxy_config_type != 'urltest' || !length(target.urltest_proxy_links || [])))
 				die('section_move_blocked');
 			let values = currentValues(target, move.key);
 			if (move.key == 'user_domains' || move.key == 'user_subnets') {
@@ -275,5 +294,9 @@ export function mergeConfig(main, settings, feed, allowDeletes, ignored, restric
 			delete patch[key];
 		}
 	}
-	return { patches, counts, order: feed.ordered ? ['notUnderSanctions', 'main'] : null };
+	if (native) {
+		for (let name, patch in native.patches) patches[name] = patch;
+		counts.native = native.counts;
+	}
+	return { patches, counts, order: feed.ordered ? ['notUnderSanctions', 'main'] : null, native };
 };

@@ -128,7 +128,7 @@ print(sprintf('%03d\n198.18.0.42\n192.168.2.1\n', reply.status));
 exit(reply.exit);
 '''
 
-    def reset(backend='stable', enabled='1', check='1', configured=True):
+    def reset(backend='stable', enabled='1', check='1', configured=True, native=False, node_names=None):
         global control_socket
         if control_socket:
             control_socket.close()
@@ -140,9 +140,17 @@ exit(reply.exit);
         for helper_name in ['health-io', 'run', 'software']:
             (root / 'usr/libexec/podkop-config-auto-updater' / helper_name).chmod(0o755)
         write('/etc/config/podkop_config_auto_updater', "config settings 'main'\n option enabled '" + enabled + "'\n option openai_check_enabled '" + check + "'\n")
-        config = "config settings 'settings'\n option config_path '/etc/sing-box/config.json'\nconfig section 'main'\n option connection_type 'proxy'\n"
+        config = "config settings 'settings'\n option config_path '/etc/sing-box/config.json'\n"
+        if native:
+            config += " option config_version '2'\n"
+        config += "config section 'main'\n"
+        if not native:
+            config += " option connection_type 'proxy'\n"
         if configured:
-            config += "config section 'notUnderSanctions'\n option connection_type 'proxy'\n option proxy_config_type 'urltest'\n list urltest_proxy_links 'vless://synthetic@example.test:443'\n"
+            if native:
+                config += "config section 'notUnderSanctions'\nconfig source 'fixture_source'\n option type 'subscription'\n option url 'https://example.test/subscription'\nconfig member 'fixture_member'\n option section 'notUnderSanctions'\n option source 'fixture_source'\n"
+            else:
+                config += "config section 'notUnderSanctions'\n option connection_type 'proxy'\n option proxy_config_type 'urltest'\n list urltest_proxy_links 'vless://synthetic@example.test:443'\n"
         write('/etc/config/podkop', config)
         runtime = json.dumps({'experimental': {'clash_api': {'external_controller': '127.0.0.1:9090', 'secret': 'private-api-fixture-secret'}}})
         write('/etc/sing-box/config.json', runtime)
@@ -151,10 +159,11 @@ exit(reply.exit);
         write('/fixtures/probes', '')
         write('/fixtures/selected', '')
         write('/fixtures/replies.json', '{}')
+        nodes = node_names or [first, second, third]
         proxies = {
-            group: {'type': 'Selector', 'now': automatic, 'all': [automatic, first, second, third, 'DIRECT', 'notUnderSanctions-block']},
-            automatic: {'type': 'URLTest', 'now': first, 'all': [first, second, third]},
-            first: {'type': 'VLESS'}, second: {'type': 'VLESS'}, third: {'type': 'Trojan'},
+            group: {'type': 'Selector', 'now': automatic, 'all': [automatic, *nodes, 'DIRECT', 'notUnderSanctions-block']},
+            automatic: {'type': 'URLTest', 'now': nodes[0], 'all': nodes},
+            nodes[0]: {'type': 'VLESS'}, nodes[1]: {'type': 'VLESS'}, nodes[2]: {'type': 'Trojan'},
             'notUnderSanctions-block': {'type': 'Reject'}, 'DIRECT': {'type': 'Direct'},
             'main-out': {'type': 'Selector', 'now': 'main-1-out', 'all': ['main-1-out']}, 'main-1-out': {'type': 'VLESS'}
         }
@@ -265,6 +274,49 @@ if type service_stopped >/dev/null 2>&1; then service_stopped; fi
         assert (root / 'fixtures/choice').read_text() == automatic
         assert state()['owned'] is None
         checks += 1
+
+    native_first = 'provider: 🇺🇸 США — Нейросети'
+    native_second = 'provider: $(touch /fixtures/injected) "backup"'
+    native_third = 'provider: Нидерланды / 3'
+    native_nodes = [native_first, native_second, native_third]
+    original = reset('experimental', native=True, node_names=native_nodes)
+    replies({native_first: reply(403, {'error': {'code': 'unsupported_country_region_territory'}})})
+    code, report = command()
+    assert code == 0 and report['state'] == 'healthy' and report['selected'] == native_second, report
+    assert (root / 'fixtures/probes').read_text().splitlines() == [native_first, native_second]
+    assert not (root / 'fixtures/injected').exists()
+    assert (root / 'etc/config/podkop').read_bytes() == original
+    code, report = command('release')
+    assert code == 0 and report['state'] == 'disabled'
+    assert (root / 'fixtures/choice').read_text() == automatic
+    checks += 1
+
+    reset('experimental', native=True, node_names=native_nodes)
+    proxies = json.loads((root / 'fixtures/proxies.json').read_text())
+    proxies[group]['all'] = [automatic, native_first, 'nested: group', 'DIRECT', 'notUnderSanctions-block']
+    proxies[automatic] = {'type': 'URLTest', 'now': native_first, 'all': [native_first]}
+    proxies['nested: group'] = {'type': 'Selector', 'now': 'unrelated: proxy', 'all': ['unrelated: proxy']}
+    proxies['unrelated: proxy'] = {'type': 'VLESS'}
+    write('/fixtures/proxies.json', json.dumps(proxies))
+    replies({native_first: reply(403, {'error': {'code': 'unsupported_country_region_territory'}})})
+    code, report = command()
+    assert code == 0 and report['state'] == 'no_eligible_nodes', report
+    assert (root / 'fixtures/probes').read_text().splitlines() == [native_first]
+    assert (root / 'fixtures/selected').read_text().splitlines() == [native_first]
+    checks += 1
+
+    reset('experimental', native=True, node_names=native_nodes)
+    write('/fixtures/choice', 'not-a-member')
+    code, report = command()
+    assert code == 1 and report['state'] == 'error' and report['error'] == 'invalid_runtime', report
+    assert not (root / 'fixtures/probes').read_text() and not (root / 'fixtures/selected').read_text()
+    checks += 1
+
+    reset('experimental', native=True, configured=False)
+    code, report = command(extra={'MOCK_API_DOWN': '1'})
+    assert code == 0 and report['state'] == 'not_configured', report
+    assert not (root / 'fixtures/probes').read_text()
+    checks += 1
 
     for options, expected in [({'enabled': '0'}, 'disabled'), ({'check': '0'}, 'disabled'), ({'configured': False}, 'not_configured')]:
         reset(**options)

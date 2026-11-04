@@ -150,4 +150,58 @@ rejectsCode(() => mergeConfig(oldUrl, {}, selectConfig(proxyMove, blockedProxy),
 	'section_move_blocked', 'active URL cannot be deleted while target proxy list is disabled');
 rejectsCode(() => mergeConfig(oldUrl, {}, selectConfig(proxyMove, []), false, [], targetPool),
 	'section_move_blocked', 'active URL move requires deletion permission');
+
+let nativeInput = { schema_version: 4, revision: 'native-subscriptions', main: {
+	user_domains: ['ordinary.example', { value: 'ai.example', delete: true }]
+}, notUnderSanctions: { enabled: '1', user_domain_list_type: 'text', user_domains: [{ comment: 'AI' }, 'ai.example'] },
+	settings: { urltest_check_interval: '3m', urltest_tolerance: '50', urltest_testing_url: 'https://check.example/204' },
+	sources: { provider: { type: 'subscription', label: 'Example provider', url: 'https://provider.example/sub', update_interval: '1d' } },
+	members: {
+		main_provider: { section: 'main', source: 'provider', role: 'server', include: [], exclude: ['ОБХОД'] },
+		nas_provider: { section: 'notUnderSanctions', source: 'provider', role: 'server', include: ['Germany'], exclude: ['ОБХОД'] }
+	}, replace_members: ['main', 'notUnderSanctions'] };
+let nativeCurrent = {
+	settings: { '.type': 'settings', config_version: '2' },
+	main: { '.type': 'section', user_domain_list_type: 'text', user_domains_text: 'ai.example' },
+	notUnderSanctions: { '.type': 'section' },
+	old_source: { '.type': 'source', type: 'subscription', url: 'https://old.example/sub' },
+	old_main: { '.type': 'member', section: 'main', source: 'old_source', role: 'server' },
+	unrelated: { '.type': 'member', section: 'other', source: 'old_source', role: 'server' }
+};
+let nativeFeed = selectConfig(nativeInput, []);
+let nativeResult = mergeConfig(nativeCurrent.main, nativeCurrent.settings, nativeFeed, true, [], nativeCurrent.notUnderSanctions, nativeCurrent);
+check(nativeResult.native.types.provider == 'source' && nativeResult.native.types.main_provider == 'member', 'native sources and members have explicit UCI types');
+check(join(',', nativeResult.native.delete_sections) == 'old_main', 'replace only old members of declared rules');
+check(!exists(nativeResult.patches, 'old_source') && !exists(nativeResult.patches, 'unrelated'), 'native replacement preserves unrelated sources and members');
+check(nativeResult.patches.settings.urltest_check_interval == '3m' && !exists(nativeResult.patches.main, 'urltest_proxy_links'), 'native checks global and subscription-only rules have no proxies');
+check(nativeResult.patches.notUnderSanctions.user_domains_text == '// AI\nai.example', 'native route move supported by membership instead of old proxy links');
+let nativeAgain = {};
+for (let name, values in nativeCurrent) nativeAgain[name] = { ...values };
+for (let name in nativeResult.native.delete_sections) delete nativeAgain[name];
+for (let name, patch in nativeResult.patches) nativeAgain[name] = { ...(nativeAgain[name] || {}), ...patch, '.type': nativeResult.native.types[name] || (name == 'settings' ? 'settings' : 'section') };
+let sameNative = mergeConfig(nativeAgain.main, nativeAgain.settings, nativeFeed, true, [], nativeAgain.notUnderSanctions, nativeAgain);
+check(!length(filter(keys(sameNative.patches), name => length(keys(sameNative.patches[name])))) && !length(sameNative.native.delete_sections), 'native subscriptions and membership replacement idempotent');
+check(index(configFields(nativeInput), 'sources.provider.url') >= 0 && index(configFields(nativeInput), 'members.nas_provider.include') >= 0 && index(configFields(nativeInput), 'membership.main') >= 0, 'native field discovery has individual options and replacement controls');
+rejectsCode(() => mergeConfig({}, {}, nativeFeed, true, [], {}, {}), 'experimental_version_required', 'native schema cannot migrate stable or old experimental configuration');
+rejectsCode(() => mergeConfig(nativeCurrent.main, nativeCurrent.settings, nativeFeed, false, [], {}, nativeCurrent), 'native_membership_delete_disabled', 'membership replacement requires deletes for existing old rows');
+let blockedMembership = ['membership.main'];
+rejectsCode(() => mergeConfig(nativeCurrent.main, nativeCurrent.settings, selectConfig(nativeInput, blockedMembership), true, blockedMembership, {}, nativeCurrent), 'protected_option_required', 'protected membership prevents partial replacement');
+for (let blockedField in ['sources.provider.url', 'members.nas_provider.include', 'members.main_provider.source']) {
+	let blocked = [blockedField];
+	rejectsCode(() => mergeConfig(nativeCurrent.main, nativeCurrent.settings, selectConfig(nativeInput, blocked), true, blocked, {}, nativeCurrent), 'protected_option_required', 'protected native option prevents replacement: ' + blockedField);
+}
+let collidedNative = { ...nativeCurrent, provider: { '.type': 'section' } };
+rejectsCode(() => mergeConfig({}, nativeCurrent.settings, nativeFeed, true, [], {}, collidedNative), 'native_section_collision', 'native source cannot overwrite another UCI type');
+rejects(() => validateConfig({ ...nativeInput, main: { urltest_proxy_links: ['vless://old@example.test:443'] } }), 'native schema rejects obsolete proxy fields');
+rejects(() => validateConfig({ ...nativeInput, settings: { config_version: '1' } }), 'native file cannot downgrade config version');
+rejects(() => validateConfig({ ...nativeInput, sources: { provider: { type: 'subscription', url: 'http://provider.example/sub' } } }), 'subscriptions require HTTPS');
+rejects(() => validateConfig({ ...nativeInput, sources: { 'provider;touch': nativeInput.sources.provider } }), 'native section ids cannot inject UCI names');
+rejects(() => validateConfig({ ...nativeInput, members: { nas_provider: { ...nativeInput.members.nas_provider, include: ['Germany\ninjected'] } } }), 'native filter rejects control characters');
+rejects(() => validateConfig({ ...nativeInput, replace_members: ['main', 'main'] }), 'native replacement cannot duplicate a rule');
+rejects(() => validateConfig({ ...nativeInput, replace_members: '' }), 'native replacement requires an array');
+let missingReference = { ...nativeInput, members: { ...nativeInput.members, nas_provider: { ...nativeInput.members.nas_provider, source: 'unknown_source' } } };
+rejectsCode(() => mergeConfig(nativeCurrent.main, nativeCurrent.settings, selectConfig(missingReference, []), true, [], {}, nativeCurrent), 'invalid_native_reference', 'native members require an effective filled source');
+let nativeChangedFilter = { ...nativeInput, members: { ...nativeInput.members, nas_provider: { ...nativeInput.members.nas_provider, include: ['France'] } } };
+let changedFilter = mergeConfig(nativeAgain.main, nativeAgain.settings, selectConfig(nativeChangedFilter, []), true, [], nativeAgain.notUnderSanctions, nativeAgain);
+check(join(',', changedFilter.patches.nas_provider.include) == 'France', 'native include filters replace rather than append old countries');
 printf('config: %d checks passed\n', passed);

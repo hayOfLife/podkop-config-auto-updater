@@ -43,10 +43,15 @@ case "$action" in
 		;;
 	probe)
 		port="$3"
-		selected="$4"
 		case "$port" in ''|*[!0-9]*) exit 2 ;; esac
 		[ "$port" -ge 40000 ] && [ "$port" -le 60000 ] || exit 2
-		case "$selected" in notUnderSanctions-*) ;; *) exit 2 ;; esac
+		ucode -e '
+			import { readfile } from "fs";
+			let selected;
+			try { selected = json(readfile(ARGV[0]))?.name; } catch (e) { exit(2); }
+			if (type(selected) != "string" || !length(selected) || length(selected) > 1024 ||
+				index(selected, "\u0000") >= 0 || match(selected, /[[:cntrl:]]/)) exit(2);
+		' "$work/probe-selected.json"
 		probe_pid=''
 		cleanup() {
 			if [ -n "$probe_pid" ]; then kill "$probe_pid" 2>/dev/null || true; wait "$probe_pid" 2>/dev/null || true; fi
@@ -73,14 +78,15 @@ case "$action" in
 					import { readfile } from "fs";
 					let data;
 					try { data = json(readfile(ARGV[0])); } catch (e) { exit(0); }
+					let selected = json(readfile(ARGV[2])).name;
 					for (let row in data?.connections || []) {
 						let m = row.metadata;
 						if (m?.sourcePort != ARGV[1] || m.host != "api.openai.com" || m.destinationPort != "443") continue;
 						let chain = row.chains;
-						let confirmed = type(chain) == "array" && index(chain, "notUnderSanctions-out") >= 0 && index(chain, ARGV[2]) >= 0;
+						let confirmed = type(chain) == "array" && index(chain, "notUnderSanctions-out") >= 0 && index(chain, selected) >= 0;
 						print(sprintf("%J\n", { source: m.sourceIP, confirmed }));
 					}
-				' "$work/connections.json" "$port" "$selected" >> "$work/proof" 2>/dev/null || true
+				' "$work/connections.json" "$port" "$work/probe-selected.json" >> "$work/proof" 2>/dev/null || true
 			fi
 			# BusyBox в OpenWrt может не поддерживать дробные секунды у команды sleep
 			ucode -e 'sleep(200);'

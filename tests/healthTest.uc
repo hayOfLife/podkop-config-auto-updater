@@ -1,9 +1,15 @@
-import { classifyProbe, planProbe } from 'health';
+import { classifyProbe, planProbe, safeProxyTag } from 'health';
 let passed = 0;
 function check(value, label) { if (!value) die(label); passed++; }
 function response(message, code, kind) {
 	return sprintf('%J', { error: { message, code, type: kind || 'invalid_request_error' } });
 }
+check(safeProxyTag('notUnderSanctions-1-out', false), 'classic node tag remains supported');
+check(!safeProxyTag('provider: США', false), 'classic mode retains its restricted tag format');
+check(safeProxyTag('provider: 🇺🇸 США — Нейросети', true), 'native source tags allow Unicode and spaces');
+check(safeProxyTag('provider: $(touch /tmp/example) "name"', true), 'native tag remains literal JSON data');
+for (let tag in ['', 'source:\nline', 'source:\tline', 'source:\u0000hidden', sprintf('%01025d', 1)])
+	check(!safeProxyTag(tag, true), 'empty control or oversized native tag rejected');
 let missing = response('Missing bearer authentication in header', null);
 let blocked = response('Country, region, or territory not supported', 'unsupported_country_region_territory', 'request_forbidden');
 check(classifyProbe(0, 401, missing) == 'reachable', 'known missing bearer response reaches authorization');
