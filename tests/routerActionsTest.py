@@ -76,10 +76,22 @@ case "$url" in
   printf '%s\\n' "$url" >> /fixtures/urls
   case "$url" in "https://github.com/$(cat /fixtures/repository)/releases/download/"*) ;; *) exit 99 ;; esac
   cp "/fixtures/assets/${url##*/}" "$out" ;;
+ https://raw.githubusercontent.com/*)
+  printf '%s\\n' "$url" >> /fixtures/urls
+  [ "$url" = "$(cat /fixtures/stock-url)" ] || exit 99
+  cp /fixtures/stock-podkop "$out" ;;
  *) cp /fixtures/feed.json "$out" ;;
 esac
 printf '%s' "${MOCK_HTTP_CODE:-200}"
 [ "${MOCK_HTTP_CODE:-200}" -lt 400 ] || exit 22
+''', True)
+    write('/bin/ubus', '''#!/bin/sh
+[ "${MOCK_UBUS_FAIL:-0}" = 0 ] || exit 1
+[ "$1 $2" = 'call service' ] && [ "$3" = list ] || exit 2
+case "$4" in *sing-box*) name=sing-box ;; *podkop*) name=podkop ;; *) exit 2 ;; esac
+active=false
+if [ "$(cat /fixtures/service-running)" = 1 ]; then active=true; fi
+printf '{"%s":{"instances":{"main":{"running":%s}}}}' "$name" "$active"
 ''', True)
     manager = '''#!/bin/sh
 kind="${0##*/}"
@@ -310,6 +322,113 @@ exit ''' + ('1' if restart_fails else '0') + '\n', True)
         assert snapshot() == before
         assert not list((root / 'tmp/podkop-config-auto-updater').glob('run.*'))
         checks += 1
+
+    def prepare_reset(variant='stable', format='apk', version=None):
+        reset(format=format)
+        version = version or ('0.8.8-r1' if variant == 'experimental' else '0.7.24-r1')
+        package = 'podkop-exp' if variant == 'experimental' else 'podkop'
+        write('/fixtures/installed/' + package, version)
+        release = re.sub(r'-r\d+$', '', version.removeprefix('v'))
+        repository = 'podkop-net/podkop-experimental' if variant == 'experimental' else 'itdoginfo/podkop'
+        tag = ('v' if variant == 'experimental' else '') + release
+        write('/fixtures/stock-url', f'https://raw.githubusercontent.com/{repository}/{tag}/podkop/files/etc/config/podkop')
+        native = variant == 'experimental' and int(release.split('.')[2]) >= 8
+        stock = ("config settings 'settings'\n option config_version '2'\nconfig source 'src1'\nconfig section 'main'\nconfig member\n option section 'main'\n option role 'server'\n option source 'src1'\n" if native else
+                 "config settings 'settings'\n option dns_type 'udp'\nconfig section 'main'\n option connection_type 'proxy'\n option proxy_config_type 'url'\n option proxy_string ''\n")
+        write('/fixtures/stock-podkop', stock)
+        write('/etc/config/podkop', "config settings 'settings'\n option shutdown_correctly '0'\n option dns_server '192.0.2.8'\nconfig section 'main'\n option manual 'keep-before-stop'\nconfig section 'notUnderSanctions'\n option manual 'remove-at-reset'\n")
+        write('/etc/config/network', 'LAN configuration remains')
+        write('/etc/config/wireless', 'WiFi configuration remains')
+        write('/fixtures/service-running', '1')
+        write('/etc/init.d/sing-box', '#!/bin/sh\nexit 0\n', True)
+        write('/etc/init.d/podkop', '''#!/bin/sh
+case "$1" in
+ stop)
+  printf 'stop\\n' >> /fixtures/calls
+  ucode -e 'import { readfile } from "fs"; if (index(readfile("/etc/config/podkop"), "keep-before-stop") < 0) exit(1);' || exit 9
+  if [ "${MOCK_RESET_WAIT:-0}" = 1 ]; then
+   ucode -e 'import { stat } from "fs"; while (!stat("/fixtures/continue")) sleep(20);'
+  fi
+  ucode -e 'import { cursor } from "uci"; let c=cursor(); c.set("podkop", "settings", "shutdown_correctly", "1"); c.commit("podkop");'
+  printf '0' > /fixtures/service-running
+  if [ "${MOCK_RESET_WRITE_FAIL:-0}" = 1 ]; then rm /etc/config/podkop.sattelite-new; fi
+  if [ "${MOCK_RESET_CONCURRENT:-0}" = 1 ]; then
+   ucode -e 'import { cursor } from "uci"; let c=cursor(); c.set("podkop", "main", "manual", "concurrent-change"); c.commit("podkop");'
+  fi
+  [ "${MOCK_RESET_STOP_FAIL:-0}" = 0 ] ;;
+ start)
+  printf 'start\\n' >> /fixtures/calls
+  [ "${MOCK_RESET_START_FAIL:-0}" = 0 ] || exit 1
+  printf '1' > /fixtures/service-running ;;
+ *) exit 2 ;;
+esac
+''', True)
+        protected = {name: (root / ('etc/config/' + name)).read_bytes() for name in ['podkop_config_auto_updater', 'network', 'wireless']}
+        return (root / 'etc/config/podkop').read_bytes(), stock.encode(), protected
+
+    for format in ['apk', 'ipk']:
+        for variant in ['stable', 'experimental']:
+            before, stock, protected = prepare_reset(variant, format)
+            code, report = command('run', 'reset')
+            assert code == 0 and report['state'] == 'reset' and report['action'] == 'reset' and report['service_stopped'] is True, report
+            assert report['variant'] == variant
+            assert (root / 'etc/config/podkop').read_bytes() == stock
+            assert (root / 'tmp/podkop-config-auto-updater/previous-podkop').read_bytes() == before
+            assert (root / 'fixtures/calls').read_text() == 'stop\n'
+            assert (root / 'fixtures/service-running').read_text() == '0'
+            assert (root / 'fixtures/urls').read_text().strip() == (root / 'fixtures/stock-url').read_text()
+            assert all((root / ('etc/config/' + name)).read_bytes() == data for name, data in protected.items())
+            checks += 1
+
+    for scenario in ['pending', 'network', 'bad_stock', 'package_conflict', 'package_missing', 'old_version', 'state_fail', 'stop_fail', 'write_fail', 'concurrent', 'stopped_write_fail']:
+        before, stock, protected = prepare_reset()
+        extra = {}
+        expected = {'pending': 'pending_changes', 'network': 'download_http_error', 'bad_stock': 'invalid_stock_config',
+                    'package_conflict': 'podkop_variant_conflict', 'package_missing': 'podkop_package_missing',
+                    'old_version': 'reset_unsupported_version', 'state_fail': 'reset_service_state_failed',
+                    'stop_fail': 'reset_stop_failed', 'write_fail': 'write_failed', 'concurrent': 'reset_failed_manual_recovery',
+                    'stopped_write_fail': 'write_failed'}[scenario]
+        if scenario == 'pending': write('/tmp/.uci/podkop', 'unsaved manual config')
+        if scenario == 'network': extra = {'MOCK_CURL_EXIT': '7', 'MOCK_HTTP_CODE': '000'}; expected = 'download_connect_failed'
+        if scenario == 'bad_stock': write('/fixtures/stock-podkop', "config settings 'settings'\nconfig section 'main'\n option connection_type 'proxy'\n option proxy_config_type 'url'\n option proxy_string 'secret-server'\n")
+        if scenario == 'package_conflict': write('/fixtures/installed/podkop-exp', '0.8.8-r1')
+        if scenario == 'package_missing': (root / 'fixtures/installed/podkop').unlink()
+        if scenario == 'old_version': write('/fixtures/installed/podkop', '0.6.1-r1')
+        if scenario == 'state_fail': extra = {'MOCK_UBUS_FAIL': '1'}
+        if scenario == 'stop_fail': extra = {'MOCK_RESET_STOP_FAIL': '1'}
+        if scenario in ['write_fail', 'stopped_write_fail']: extra = {'MOCK_RESET_WRITE_FAIL': '1'}
+        if scenario == 'stopped_write_fail': write('/fixtures/service-running', '0')
+        if scenario == 'concurrent': extra = {'MOCK_RESET_CONCURRENT': '1'}
+        code, report = command('run', 'reset', extra)
+        assert code == 1 and report['state'] == 'error' and report['action'] == 'reset' and report['error'] == expected, (scenario, report)
+        if scenario == 'concurrent':
+            assert 'concurrent-change' in (root / 'etc/config/podkop').read_text()
+            assert (root / 'fixtures/calls').read_text() == 'stop\n'
+        else:
+            assert (root / 'etc/config/podkop').read_bytes() == before, scenario
+            calls = (root / 'fixtures/calls').read_text()
+            assert calls == ('stop\nstart\n' if scenario in ['stop_fail', 'write_fail'] else 'stop\n' if scenario == 'stopped_write_fail' else ''), (scenario, calls)
+        assert all((root / ('etc/config/' + name)).read_bytes() == data for name, data in protected.items())
+        checks += 1
+
+    before, stock, protected = prepare_reset('experimental')
+    code, started = command('run', 'reset-start', {'MOCK_RESET_WAIT': '1'})
+    assert code == 0 and started['state'] == 'running' and started['action'] == 'reset', started
+    for attempt in range(200):
+        code, report = command('run', 'status')
+        if report.get('stage') == 'reset_stopping': break
+        time.sleep(0.05)
+    assert report['state'] == 'running' and report['action'] == 'reset' and report['operation'] == started['operation'], report
+    code, busy = command('run', 'update-start')
+    assert code == 1 and busy['error'] == 'busy', busy
+    code, busy = command('software', 'self')
+    assert code == 1 and busy['error'] == 'busy', busy
+    write('/fixtures/continue', '')
+    finished = wait_config()
+    assert finished['state'] == 'reset' and finished['service_stopped'] is True and finished['operation'] == started['operation'], finished
+    assert (root / 'etc/config/podkop').read_bytes() == stock
+    assert all((root / ('etc/config/' + name)).read_bytes() == data for name, data in protected.items())
+    checks += 1
 
     def prepare_release(target, format, current=None, variant='stable'):
         revision = '0.1.1' if target == 'self' else ('0.8.4' if variant == 'experimental' else '0.7.24')

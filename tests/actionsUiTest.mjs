@@ -16,7 +16,7 @@ function find(node, label) {
 	for (const child of node?.children || []) { const match = find(child, label); if (match) return match; }
 }
 async function fixture(exec, initial = {}, fields = ['main.future_option', 'settings.dns_server']) {
-	const calls = [], modals = [], notifications = [], timers = new Map(), options = {};
+	const calls = [], modals = [], modalContents = [], notifications = [], timers = new Map(), options = {};
 	const settings = {...initial};
 	const enabledNode = element('span', {}, []);
 	let mapDescription;
@@ -37,11 +37,11 @@ async function fixture(exec, initial = {}, fields = ['main.future_option', 'sett
 		fs: {exec(path, args) { calls.push([path, [...args]]); return exec(path, args); }},
 		ui: {createHandlerFn: (owner, handler) => handler.bind(owner), hideModal() {},
 			addNotification(title, node, type) { notifications.push({text: flatten(node), type}); },
-			showModal(title, content) { modals.push(content.map(flatten).join(' ')); }},
+			showModal(title, content) { modals.push(content.map(flatten).join(' ')); modalContents.push(content); }},
 		poll: {add(fn, interval) { timers.set(fn, interval); }, remove(fn) { timers.delete(fn); }}
 	});
 	const tree = await view.render({enabled: true, software: {state: 'idle'}, fields});
-	return {tree, calls, modals, notifications, timers, options, enabledNode, settings, mapDescription};
+	return {tree, calls, modals, modalContents, notifications, timers, options, enabledNode, settings, mapDescription};
 }
 
 for (const terminal of ['applied', 'unchanged', 'error']) {
@@ -403,5 +403,25 @@ for (const [selected, visible] of [['provider: 🇩🇪 Germany', true], ['vless
 	assert.equal(text.includes(selected), visible);
 	checks++;
 }
+
+let resetStatus = {state: 'running', action: 'reset', stage: 'reset_downloading', operation: 'run.reset'};
+const reset = await fixture((path, args) => Promise.resolve({code: 0, stdout: JSON.stringify(resetStatus)}));
+await find(reset.tree, 'Сбросить настройки подкоп к стандартным').attributes.click();
+assert.equal(reset.calls.length, 0);
+assert.match(reset.modals.at(-1), /удалены все текущие правила, источники подписок/);
+assert.match(reset.modals.at(-1), /VPN-соединение может прерваться/);
+assert.match(reset.modals.at(-1), /следующее автоматическое обновление может снова применить/);
+find({children: reset.modalContents.at(-1)}, 'Отмена').attributes.click();
+assert.equal(reset.calls.length, 0);
+await find(reset.tree, 'Сбросить настройки подкоп к стандартным').attributes.click();
+await find({children: reset.modalContents.at(-1)}, 'Сбросить').attributes.click();
+assert.deepEqual(reset.calls.map(call => call[1]), [['reset-start'], ['status']]);
+assert.match(flatten(reset.tree), /Сброс выполняется: скачивание штатного конфига/);
+assert.equal(reset.notifications.length, 0);
+resetStatus = {state: 'reset', action: 'reset', operation: 'run.reset', time: 1793790000};
+await [...reset.timers.entries()].find(([, interval]) => interval === 10)[0]();
+assert.match(reset.notifications.at(-1).text, /Штатные настройки Podkop восстановлены/);
+assert.match(reset.notifications.at(-1).text, /Сброс выполнен:/);
+checks++;
 
 console.log(`LuCI actions: ${checks} command routing, popup, selection and background completion scenarios passed`);

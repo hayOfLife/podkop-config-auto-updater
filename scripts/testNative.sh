@@ -23,7 +23,7 @@ build_source ucode https://github.com/jow-/ucode.git "$ucode_revision" -DUBUS_SU
 export LD_LIBRARY_PATH="$tools_dir/install/lib"
 export PATH="$tools_dir/install/bin:$PATH"
 sh -n install.sh
-for worker in worker software health-worker; do
+for worker in worker software health-worker reset-worker; do
 	ucode -L "$tools_dir/install/lib/ucode" -L "$PWD/package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater" -c -o "$tools_dir/$worker.ucb" "package/luci-app-podkop-config-auto-updater/root/usr/share/podkop-config-auto-updater/$worker.uc"
 done
 for script in package/luci-app-podkop-config-auto-updater/root/usr/libexec/podkop-config-auto-updater/* package/luci-app-podkop-config-auto-updater/root/etc/init.d/* package/luci-app-podkop-config-auto-updater/root/etc/uci-defaults/*; do

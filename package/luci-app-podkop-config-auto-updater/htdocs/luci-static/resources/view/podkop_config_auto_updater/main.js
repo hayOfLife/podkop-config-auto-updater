@@ -60,6 +60,15 @@ var errors = {
 	empty_proxy_pool: 'Секция main или notUnderSanctions осталась бы без серверов URLTest. Настройки сохранены без изменений.',
 	incompatible_section: 'Одна из секций main или notUnderSanctions использует другой тип подключения. Выберите для неё в Podkop Proxy и URLTest.',
 	podkop_missing: 'Сначала установите и настройте Podkop.',
+	reset_unsupported_version: 'Для установленной версии Podkop нельзя определить совместимый штатный конфиг. Сброс не запускался.',
+	invalid_stock_config: 'Скачанный штатный конфиг не прошёл проверку. Текущие настройки Podkop не заменены.',
+	reset_service_state_failed: 'Не удалось определить состояние Podkop. Сброс не завершён; проверьте службу.',
+	reset_stop_failed: 'Не удалось подтвердить остановку Podkop. Проверьте состояние службы; сброс не завершён.',
+	reset_failed_manual_recovery: 'Во время сброса настройки Podkop изменились. Автоматический откат остановлен, чтобы сохранить ручные изменения; проверьте конфиг и запустите Podkop вручную.',
+	reset_restore_failed: 'После ошибки сброса не удалось восстановить прежнее состояние Podkop. Нужна ручная проверка; временная копия конфига сохранена в RAM.',
+	package_query_failed: 'Не удалось прочитать версию установленного пакета. Операция не запускалась.',
+	invalid_installed_version: 'Версия установленного Podkop имеет неподдерживаемый формат. Операция не запускалась.',
+	write_failed: 'Не удалось записать настройки. Проверьте свободное место и состояние файловой системы роутера.',
 	restart_failed_restored: 'Podkop не принял изменения. Предыдущая конфигурация восстановлена.',
 	restart_failed_manual_recovery: 'Podkop не запустился, а конфигурация уже изменена вручную. Нужна проверка администратора.',
 	rollback_restart_failed: 'Конфигурация восстановлена, но Podkop не запустился. Нужна проверка администратора.',
@@ -139,13 +148,17 @@ function statusText(status) {
 	var text = '';
 	if (status.state === 'running') {
 		var stages = {starting: 'запуск', downloading: 'скачивание и проверка файла',
-			preparing: 'подготовка настроек', restarting: 'перезапуск Podkop'};
-		return 'Обновление выполняется: ' + (stages[status.stage] || 'ожидание завершения') +
+			preparing: 'подготовка настроек', restarting: 'перезапуск Podkop',
+			reset_downloading: 'скачивание штатного конфига', reset_preparing: 'проверка штатного конфига',
+			reset_stopping: 'остановка Podkop'};
+		return (status.action === 'reset' ? 'Сброс выполняется: ' : 'Обновление выполняется: ') + (stages[status.stage] || 'ожидание завершения') +
 			'. Итог ещё не получен. Страницу можно закрыть; операция продолжится на роутере.';
 	}
 	if (status.next_run && status.enabled)
 		text += ' Следующее обновление: ' + new Date(status.next_run * 1000).toLocaleString() + ' (время вашего браузера).';
 	if (status.state === 'applied') text += ' Последние изменения применены.';
+	if (status.state === 'reset') text += ' Штатные настройки Podkop восстановлены.';
+	if (status.state === 'reset' && status.service_stopped) text += ' Podkop остановлен до следующего применения настроек.';
 	if (status.state === 'unchanged') text += ' Последняя проверка: новых изменений нет.';
 	if (status.state === 'error') text += ' ' + (errors[status.error] || 'Файл конфигурации не принят. Проверьте его по инструкции о формате файла.');
 	if (status.ipv6_error) text += ' Не удалось применить настройку IPv6. Проверьте системный журнал роутера.';
@@ -161,6 +174,8 @@ function statusText(status) {
 	}
 	if ((status.state === 'applied' || status.state === 'unchanged') && Number.isFinite(status.time) && status.time > 0)
 		text += '\nОбновление произошло: ' + new Date(status.time * 1000).toLocaleString('ru-RU') + ' (время вашего браузера).';
+	if (status.state === 'reset' && Number.isFinite(status.time) && status.time > 0)
+		text += '\nСброс выполнен: ' + new Date(status.time * 1000).toLocaleString('ru-RU') + ' (время вашего браузера).';
 	return text;
 }
 
@@ -350,20 +365,19 @@ return view.extend({
 			}
 			statusNode.textContent = statusText(current);
 			button.disabled = current.state === 'running';
+			resetButton.disabled = current.state === 'running';
 			if (updateOperation && current.operation === updateOperation &&
-				['applied', 'unchanged', 'error'].indexOf(current.state) >= 0) {
+				['applied', 'unchanged', 'reset', 'error'].indexOf(current.state) >= 0) {
 				updateOperation = null;
 				ui.addNotification(null, E('p', {}, statusText(current)), current.state === 'error' ? 'error' : 'info');
 			}
 		}
-		var button = E('button', {class: 'cbi-button cbi-button-action', type: 'button',
-			disabled: status.state === 'running' ? true : null,
-			click: ui.createHandlerFn(this, function() {
-				return fs.exec(runner, ['update-start']).then(function(result) {
+		function startConfig(action) {
+				return fs.exec(runner, [action]).then(function(result) {
 					var report;
 					try { report = JSON.parse(result.stdout || '{}'); } catch (error) { report = {}; }
 					if (result.code !== 0 || report.state !== 'running' || typeof report.operation !== 'string') {
-						ui.addNotification(null, E('p', {}, errors[report.error] || 'Не удалось запустить обновление конфига.'), 'error');
+						ui.addNotification(null, E('p', {}, errors[report.error] || 'Не удалось запустить операцию с настройками Podkop.'), 'error');
 						return;
 					}
 					updateOperation = report.operation;
@@ -372,7 +386,22 @@ return view.extend({
 				}).catch(function() {
 					statusNode.textContent = 'Связь с роутером временно недоступна. Результат обновления пока не подтверждён; проверка состояния продолжится.';
 				});
-			})}, 'Обновить сейчас');
+		}
+		var button = E('button', {class: 'cbi-button cbi-button-action', type: 'button',
+			disabled: status.state === 'running' ? true : null,
+			click: ui.createHandlerFn(this, function() { return startConfig('update-start'); })}, 'Обновить сейчас');
+		var resetButton = E('button', {class: 'cbi-button cbi-button-negative', type: 'button',
+			disabled: status.state === 'running' ? true : null,
+			click: ui.createHandlerFn(this, function() {
+				ui.showModal('Сброс настроек Podkop', [
+					E('p', {}, 'Будут удалены все текущие правила, источники подписок, серверы, домены, подсети и общие настройки Podkop. Будет восстановлен штатный конфиг установленной версии.'),
+					E('p', {}, 'VPN-соединение может прерваться. После сброса Podkop будет остановлен до настройки или следующего применения конфига. Настройки Podkop config auto updater сохранятся; следующее автоматическое обновление может снова применить файл из указанного источника.'),
+					E('div', {class: 'right'}, [
+						E('button', {class: 'cbi-button', type: 'button', click: ui.hideModal}, 'Отмена'), ' ',
+						E('button', {class: 'cbi-button cbi-button-negative', type: 'button', click: function() {
+							ui.hideModal(); return startConfig('reset-start');
+						}}, 'Сбросить')])]);
+			})}, 'Сбросить настройки подкоп к стандартным');
 		var testButton = E('button', {class: 'cbi-button cbi-button-neutral', type: 'button',
 			click: ui.createHandlerFn(this, function() {
 				return fs.exec(runner, ['test']).then(function(result) {
@@ -433,7 +462,8 @@ return view.extend({
 				E('p', {class: 'cbi-section-descr'}, 'Обе кнопки используют сохранённые настройки. После изменения полей нажмите «Сохранить и применить». Тест соединения только скачивает и проверяет файл.'),
 				E('h3', {}, 'Обновление программ'), softwareNode,
 				E('div', {class: 'cbi-page-actions'}, [podkopButton, ' ', selfButton]),
-				E('p', {class: 'cbi-section-descr'}, 'Эти кнопки устанавливают пакеты из официальных релизов. Перед установкой сохраняется резервная копия настроек. Во время обновления возможен краткий перерыв в работе служб.')]);
+				E('p', {class: 'cbi-section-descr'}, 'Эти кнопки устанавливают пакеты из официальных релизов. Перед установкой сохраняется резервная копия настроек. Во время обновления возможен краткий перерыв в работе служб.'),
+				E('h3', {}, 'Восстановление Podkop'), resetButton]);
 		});
 	}
 });

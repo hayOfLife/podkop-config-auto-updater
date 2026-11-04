@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
-import { applyPatch, writePrivate } from 'transaction';
+import { applyPatch, writePrivate, resetConfig } from 'transaction';
 import { sourceRequest } from 'source';
 import { selectConfig, mergeConfig } from 'config';
 
@@ -110,6 +110,48 @@ writePrivate(paths.config, otherRuleMember);
 rejects(() => applyPatch(paths, nativeMerged.patches, otherRuleMember, () => false, () => true,
 	nativeMerged.order, nativeMerged.native), 'native transaction cannot steal an unrelated member id');
 check(fs.readfile(paths.config) == otherRuleMember, 'unrelated member id collision preserves original file');
+
+let stockLegacy = "config settings 'settings'\n option dns_type 'udp'\nconfig section 'main'\n option connection_type 'proxy'\n option proxy_config_type 'url'\n option proxy_string ''\n";
+let stockNative = "config settings 'settings'\n option config_version '2'\nconfig source 'src1'\nconfig section 'main'\nconfig member\n option section 'main'\n option source 'src1'\n option role 'server'\n";
+let stops = 0, starts = 0;
+function stoppedCommit(concurrent) {
+	let c = cursor(root, root + '/work/delta');
+	c.set('podkop', 'settings', 'shutdown_correctly', '1');
+	if (concurrent) c.set('podkop', 'main', 'manual', 'concurrent-reset-change');
+	c.commit('podkop');
+	return true;
+}
+for (let pair in [{ before: original, stock: stockLegacy, native: false }, { before: nativeOriginal, stock: stockNative, native: true }]) {
+	writePrivate(paths.config, pair.before);
+	stops = 0; starts = 0;
+	check(resetConfig(paths, pair.before, pair.stock, pair.native, () => false, {
+		running: () => true, stop: () => { stops++; return stoppedCommit(false); }, start: () => { starts++; return true; }
+	}), 'reset accepts pinned stock format and expected stop rewrite');
+	check(fs.readfile(paths.config) == pair.stock && fs.readfile(paths.backup) == pair.before, 'reset writes exact stock bytes and RAM prior configuration');
+	check(stops == 1 && starts == 0, 'reset leaves the service stopped without starting empty defaults');
+}
+writePrivate(paths.config, original);
+stops = 0;
+rejects(() => resetConfig(paths, original, stockLegacy + "config section 'unwanted'\n", false, () => false, {
+	running: () => true, stop: () => { stops++; return true; }, start: () => true
+}), 'reset rejects an unexpected stock section before stopping');
+check(stops == 0 && fs.readfile(paths.config) == original, 'invalid reset defaults preserve active config and service');
+rejects(() => resetConfig(paths, original, stockLegacy, false, () => true, {
+	running: () => true, stop: () => { stops++; return true; }, start: () => true
+}), 'reset refuses pending edits before stopping');
+starts = 0;
+rejects(() => resetConfig(paths, original, stockLegacy, false, () => false, {
+	running: () => true,
+	stop: () => { stoppedCommit(false); fs.unlink(paths.config + '.sattelite-new'); return true; },
+	start: () => { starts++; return true; }
+}), 'reset write failure restores previous running configuration');
+check(fs.readfile(paths.config) == original && starts == 1, 'failed reset restores original bytes and starts only prior service');
+writePrivate(paths.config, original);
+starts = 0;
+rejects(() => resetConfig(paths, original, stockLegacy, false, () => false, {
+	running: () => true, stop: () => stoppedCommit(true), start: () => { starts++; return true; }
+}), 'reset detects an unrelated concurrent option during stop');
+check(index(fs.readfile(paths.config), 'concurrent-reset-change') >= 0 && starts == 0, 'reset keeps concurrent file and requests manual recovery');
 let request = sourceRequest('https://github.com/example/config/blob/main/config/main.json', 'test_token');
 check(request.url == 'https://api.github.com/repos/example/config/contents/config/main.json?ref=main', 'convert GitHub file link');
 check(index(request.headers, 'Bearer test_token') >= 0, 'GitHub authorization header');
