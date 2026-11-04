@@ -2,9 +2,15 @@
 set -eu
 umask 077
 runtime=/tmp/podkop-config-auto-updater
-case "${1:-}" in status|self|podkop) ;; *) exit 2 ;; esac
+case "${1:-}" in status|versions|self|podkop) ;; *) exit 2 ;; esac
 mkdir -p "$runtime"
 chmod 700 "$runtime"
+if [ "$1" = versions ]; then
+	work="$(mktemp -d "$runtime/versions.XXXXXX")"
+	trap 'rm -rf -- "$work"' EXIT
+	ucode /usr/share/podkop-config-auto-updater/software.uc versions "$work"
+	exit $?
+fi
 exec 8>"$runtime/software.lock"
 if [ "$1" = status ]; then
 	if flock -n 8; then active=0; else active=1; fi

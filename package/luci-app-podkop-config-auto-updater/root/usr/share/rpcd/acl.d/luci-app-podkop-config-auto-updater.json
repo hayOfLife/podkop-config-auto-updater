@@ -6,7 +6,8 @@
       "ubus": {"file": ["exec"]},
       "file": {
         "/usr/libexec/podkop-config-auto-updater/run status": ["exec"],
-        "/usr/libexec/podkop-config-auto-updater/software status": ["exec"]
+        "/usr/libexec/podkop-config-auto-updater/software status": ["exec"],
+        "/usr/libexec/podkop-config-auto-updater/software versions": ["exec"]
       }
     },
     "write": {

@@ -486,6 +486,56 @@ esac
     assert all((root / ('etc/config/' + name)).read_bytes() == data for name, data in protected.items())
     checks += 1
 
+    for manager_kind in ['opkg', 'apk']:
+        for installed_stable, installed_experimental in [('0.7.24-r1', ''), ('', '0.8.9-r1'),
+                                                          ('0.7.24-r1', '0.8.9-r1'), ('', ''),
+                                                          ('0.7.24-r1', 'invalid-version')]:
+            reset(manager_kind)
+            write('/fixtures/installed/luci-app-podkop-config-auto-updater', '0.3.1-r1')
+            if installed_stable: write('/fixtures/installed/podkop', installed_stable)
+            if installed_experimental: write('/fixtures/installed/podkop-exp', installed_experimental)
+            before = snapshot()
+            (root / 'etc/config/podkop').unlink()
+            write('/tmp/.uci/podkop', 'pending changes must not block version inventory')
+            write('/tmp/podkop-config-auto-updater/software.json', '{"state":"error","target":"podkop","error":"podkop_missing"}')
+            previous_status = (root / 'tmp/podkop-config-auto-updater/software.json').read_bytes()
+            locks = [(root / ('tmp/podkop-config-auto-updater/' + name)).open('w') for name in ['software.lock', 'lock']]
+            for lock in locks: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                code, report = command('software', 'versions')
+            finally:
+                for lock in locks: lock.close()
+            assert code == 0 and report['state'] == 'versions', (manager_kind, report)
+            assert report['updater_version'] == '0.3.1-r1' and report['stable_version'] == (installed_stable or None), report
+            if installed_experimental == 'invalid-version':
+                assert report['experimental_version'] is None and report['errors'] == {'experimental': 'invalid_installed_version'}, report
+            else:
+                assert report['experimental_version'] == (installed_experimental or None) and report['errors'] == {}, report
+            assert set(report) == {'state', 'updater_version', 'stable_version', 'experimental_version', 'errors'}
+            assert not (root / 'etc/config/podkop').exists(), 'Inventory must not create missing Podkop config'
+            assert not (root / 'etc/init.d/podkop').exists(), 'Inventory must not require or install the Podkop service'
+            assert all(path.read_bytes() == data[0] for name, data in before.items()
+                       if (path := Path(name)).name != 'podkop')
+            assert (root / 'tmp/podkop-config-auto-updater/software.json').read_bytes() == previous_status
+            assert (root / 'fixtures/calls').read_text() == '' and (root / 'fixtures/urls').read_text() == '', 'Inventory must not install or download'
+            assert sorted((root / 'fixtures/version-queries').read_text().splitlines()) == [
+                'luci-app-podkop-config-auto-updater', 'podkop', 'podkop-exp']
+            assert not list((root / 'tmp/podkop-config-auto-updater').glob('versions.*'))
+            checks += 1
+
+    reset()
+    code, report = command('software', 'versions')
+    assert code == 0 and report == {'state': 'versions', 'updater_version': None, 'stable_version': None,
+                                   'experimental_version': None, 'errors': {}}, report
+    checks += 1
+
+    reset()
+    write('/etc/openwrt_release', "DISTRIB_RELEASE='23.05.5'\n")
+    code, report = command('software', 'versions')
+    assert code == 0 and report['errors'] == {name: 'package_query_failed' for name in ['updater', 'stable', 'experimental']}, report
+    assert not (root / 'tmp/podkop-config-auto-updater/software.json').exists()
+    checks += 1
+
     def prepare_release(target, format, current=None, variant='stable'):
         revision = '0.1.1' if target == 'self' else ('0.8.4' if variant == 'experimental' else '0.7.24')
         repository = 'hayOfLife/podkop-config-auto-updater' if target == 'self' else ('podkop-net/podkop-experimental' if variant == 'experimental' else 'itdoginfo/podkop')

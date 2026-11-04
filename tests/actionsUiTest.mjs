@@ -15,7 +15,7 @@ function find(node, label) {
 	if (node?.tag === 'button' && flatten(node) === label) return node;
 	for (const child of node?.children || []) { const match = find(child, label); if (match) return match; }
 }
-async function fixture(exec, initial = {}, fields = ['main.future_option', 'settings.dns_server']) {
+async function fixture(exec, initial = {}, fields = ['main.future_option', 'settings.dns_server'], extraStatus = {}) {
 	const calls = [], modals = [], modalContents = [], notifications = [], timers = new Map(), options = {};
 	const settings = {...initial};
 	const enabledNode = element('span', {}, []);
@@ -40,8 +40,8 @@ async function fixture(exec, initial = {}, fields = ['main.future_option', 'sett
 			showModal(title, content) { modals.push(content.map(flatten).join(' ')); modalContents.push(content); }},
 		poll: {add(fn, interval) { timers.set(fn, interval); }, remove(fn) { timers.delete(fn); }}
 	});
-	const tree = await view.render({enabled: true, software: {state: 'idle'}, fields});
-	return {tree, calls, modals, modalContents, notifications, timers, options, enabledNode, settings, mapDescription};
+	const tree = await view.render({enabled: true, software: {state: 'idle'}, fields, ...extraStatus});
+	return {tree, calls, modals, modalContents, notifications, timers, options, enabledNode, settings, mapDescription, view};
 }
 
 for (const terminal of ['applied', 'unchanged', 'error']) {
@@ -138,6 +138,7 @@ for (const [label, target, variant, expected] of [
 	await timer();
 	assert.match(app.modals.at(-1), expected);
 	assert.equal(app.timers.has(timer), false);
+	assert.deepEqual(app.calls.map(call => call[1]), [[target], ['status'], ['status'], ['versions']]);
 	checks++;
 }
 
@@ -150,7 +151,7 @@ for (const [variant, expected] of [[undefined, /Podkop: обновлений н�
 	await find(app.tree, 'Обновить подкоп').attributes.click();
 	assert.match(app.modals.at(-1), expected);
 	assert.match(app.modals.at(-1), /Установлена: 0\.8\.1-r1; доступна: 0\.8\.1-r1/);
-	assert.deepEqual(app.calls.map(call => call[1]), [['podkop'], ['status']]);
+	assert.deepEqual(app.calls.map(call => call[1]), [['podkop'], ['status'], ['versions']]);
 	checks++;
 }
 
@@ -164,7 +165,7 @@ for (const [error, expected] of [
 		stdout: JSON.stringify({state: args[0] === 'status' ? 'error' : 'running', target: 'podkop', variant: 'experimental', error})}));
 	await find(app.tree, 'Обновить подкоп').attributes.click();
 	assert.match(app.modals.at(-1), expected);
-	assert.deepEqual(app.calls.map(call => call[1]), [['podkop'], ['status']]);
+	assert.deepEqual(app.calls.map(call => call[1]), [['podkop'], ['status'], ['versions']]);
 	checks++;
 }
 
@@ -440,6 +441,54 @@ const oldDnsVersion = await fixture((path, args) => Promise.resolve({code: 0, st
 await find(oldDnsVersion.tree, 'Обновить сейчас').attributes.click();
 assert.match(oldDnsVersion.notifications.at(-1).text, /требуют Podkop Experimental 0\.8\.9 или новее/);
 assert.match(oldDnsVersion.notifications.at(-1).text, /Настройки не применены/);
+checks++;
+
+for (const [versions, expected] of [
+	[{state: 'versions', updater_version: '0.3.2-r1', stable_version: '0.7.24-r1', errors: {}}, /Podkop: версия 0\.7\.24-r1/],
+	[{state: 'versions', updater_version: '0.3.2-r1', experimental_version: '0.8.9-r1', errors: {}}, /Podkop Experimental: версия 0\.8\.9-r1/],
+	[{state: 'versions', updater_version: '0.3.2-r1', errors: {}}, /Podkop: версия не определена/],
+	[{state: 'unavailable'}, /Podkop: версия недоступна/],
+	[{state: 'versions', updater_version: '0.3.2-r1', errors: {stable: 'package_query_failed'}}, /Не удалось определить версию обычного Podkop/]
+]) {
+	const app = await fixture(() => Promise.resolve({}), {}, [], {software_versions: versions,
+		software: {state: 'error', error: 'podkop_missing'}});
+	const text = flatten(app.tree);
+	assert.match(text, expected);
+	assert.match(text, /Последняя попытка обновления: Сначала установите и настройте Podkop/);
+	if (versions.updater_version) assert.match(text, /Podkop config auto updater: версия 0\.3\.2-r1/);
+	assert.doesNotMatch(text, /Podkop: не установлен/);
+	assert.equal(app.calls.length, 0);
+	checks++;
+}
+
+const bothVersions = await fixture(() => Promise.resolve({}), {}, [], {software_versions: {state: 'versions',
+	updater_version: '0.3.2-r1', stable_version: '0.7.24-r1', experimental_version: '0.8.9-r1', errors: {}}});
+assert.match(flatten(bothVersions.tree), /Podkop: версия 0\.7\.24-r1/);
+assert.match(flatten(bothVersions.tree), /Podkop Experimental: версия 0\.8\.9-r1/);
+checks++;
+
+for (const failVersions of [false, true]) {
+	const app = await fixture((path, args) => args[0] === 'versions' ?
+		(failVersions ? Promise.reject(new Error('private_rpc_error')) : Promise.resolve({code: 0, stdout: JSON.stringify({
+			state: 'versions', updater_version: '0.3.2-r1', experimental_version: '0.8.9-r1', errors: {}})})) :
+		Promise.resolve({code: 0, stdout: JSON.stringify({state: 'idle', enabled: true})}));
+	const status = await app.view.load();
+	assert.deepEqual(app.calls.map(call => call[1]), [['status'], ['status'], ['versions']]);
+	assert.equal(status.software_versions.state, failVersions ? 'unavailable' : 'versions');
+	if (!failVersions) assert.equal(status.software_versions.experimental_version, '0.8.9-r1');
+	checks++;
+}
+
+let installedSelf = '0.3.1-r1';
+const refreshedVersions = await fixture((path, args) => Promise.resolve({code: 0, stdout: JSON.stringify(args[0] === 'versions' ?
+	{state: 'versions', updater_version: installedSelf, experimental_version: '0.8.9-r1', errors: {}} :
+	{state: args[0] === 'self' ? 'running' : 'updated', target: 'self'})}), {}, [], {software_versions: {
+	state: 'versions', updater_version: installedSelf, experimental_version: '0.8.9-r1', errors: {}}});
+assert.match(flatten(refreshedVersions.tree), /Podkop config auto updater: версия 0\.3\.1-r1/);
+installedSelf = '0.3.2-r1';
+await find(refreshedVersions.tree, 'Обновить себя').attributes.click();
+assert.match(flatten(refreshedVersions.tree), /Podkop config auto updater: версия 0\.3\.2-r1/);
+assert.deepEqual(refreshedVersions.calls.map(call => call[1]), [['self'], ['status'], ['versions']]);
 checks++;
 
 console.log(`LuCI actions: ${checks} command routing, popup, selection and background completion scenarios passed`);

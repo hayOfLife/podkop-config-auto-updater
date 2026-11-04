@@ -127,6 +127,28 @@ function readSoftwareStatus() {
 	}).catch(function() { return {state: 'unavailable'}; });
 }
 
+function readSoftwareVersions() {
+	return fs.exec(softwareRunner, ['versions']).then(function(result) {
+		var versions = JSON.parse(result.stdout || 'null');
+		if (result.code || !versions || versions.state !== 'versions') throw new Error('versions_unavailable');
+		return versions;
+	}).catch(function() { return {state: 'unavailable'}; });
+}
+
+function softwareVersionsText(versions) {
+	var lines = ['Podkop config auto updater: ' + (versions.updater_version ?
+		'версия ' + versions.updater_version + '.' : 'версия не определена.')];
+	if (versions.stable_version) lines.push('Podkop: версия ' + versions.stable_version + '.');
+	if (versions.experimental_version) lines.push('Podkop Experimental: версия ' + versions.experimental_version + '.');
+	if (versions.errors && versions.errors.stable) lines.push('Не удалось определить версию обычного Podkop.');
+	if (versions.errors && versions.errors.experimental) lines.push('Не удалось определить версию Podkop Experimental.');
+	// Пустой ответ пакетного менеджера не доказывает отсутствие установленного Podkop
+	if (!versions.stable_version && !versions.experimental_version &&
+		!(versions.errors && (versions.errors.stable || versions.errors.experimental)))
+		lines.push(versions.state === 'versions' ? 'Podkop: версия не определена.' : 'Podkop: версия недоступна.');
+	return lines.join('\n');
+}
+
 function softwareText(status) {
 	var name = 'Podkop config auto updater';
 	if (status.target === 'podkop') name = status.variant === 'experimental' ? 'Podkop Experimental' : 'Podkop';
@@ -139,6 +161,10 @@ function softwareText(status) {
 	if (status.state === 'error') return errors[status.error] || 'Обновить программу не удалось. Проверьте состояние пакетов на роутере.';
 	if (status.state === 'unavailable') return 'Связь с роутером временно недоступна. Проверка результата продолжится.';
 	return 'Обновление программ ещё не запускалось.';
+}
+
+function softwarePanelText(status) {
+	return (status.state === 'error' ? 'Последняя попытка обновления: ' : '') + softwareText(status);
 }
 
 function showSoftwareResult(status) {
@@ -225,8 +251,9 @@ function healthText(status) {
 
 return view.extend({
 	load: function() {
-		return Promise.all([readStatus(), readSoftwareStatus(), uci.load('podkop_config_auto_updater')]).then(function(results) {
+		return Promise.all([readStatus(), readSoftwareStatus(), readSoftwareVersions(), uci.load('podkop_config_auto_updater')]).then(function(results) {
 			results[0].software = results[1];
+			results[0].software_versions = results[2];
 			return results[0];
 		});
 	},
@@ -427,15 +454,18 @@ return view.extend({
 				});
 			})}, 'Тест соединения');
 		var softwareStatus = status.software || {state: 'idle'};
-		var softwareNode = E('p', {role: 'status'}, softwareText(softwareStatus));
+		var versionsNode = E('p', {id: 'podkop-updater-software-versions', role: 'status', style: 'white-space: pre-line'},
+			softwareVersionsText(status.software_versions || {}));
+		var softwareNode = E('p', {role: 'status'}, softwarePanelText(softwareStatus));
 		var softwareActive = softwareStatus.state === 'running';
 		function refreshSoftware() {
 			return readSoftwareStatus().then(function(current) {
-				softwareNode.textContent = softwareText(current);
+				softwareNode.textContent = softwarePanelText(current);
 				if (softwareActive && current.state !== 'running' && current.state !== 'unavailable') {
 					softwareActive = false;
 					poll.remove(refreshSoftware);
 					showSoftwareResult(current.state === 'idle' ? {state: 'error', error: 'interrupted'} : current);
+					return readSoftwareVersions().then(function(versions) { versionsNode.textContent = softwareVersionsText(versions); });
 				}
 			});
 		}
@@ -468,7 +498,7 @@ return view.extend({
 			refreshEnabled(status);
 			return E('div', {}, [formNode, statusNode, healthNode, E('div', {class: 'cbi-page-actions'}, [testButton, ' ', button]),
 				E('p', {class: 'cbi-section-descr'}, 'Обе кнопки используют сохранённые настройки. После изменения полей нажмите «Сохранить и применить». Тест соединения только скачивает и проверяет файл.'),
-				E('h3', {}, 'Обновление программ'), softwareNode,
+				E('h3', {}, 'Обновление программ'), versionsNode, softwareNode,
 				E('div', {class: 'cbi-page-actions'}, [podkopButton, ' ', selfButton]),
 				E('p', {class: 'cbi-section-descr'}, 'Эти кнопки устанавливают пакеты из официальных релизов. Перед установкой сохраняется резервная копия настроек. Во время обновления возможен краткий перерыв в работе служб.'),
 				E('h3', {}, 'Восстановление Podkop'), resetButton]);

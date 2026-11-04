@@ -2,7 +2,7 @@ import * as fs from 'fs';
 
 const target = ARGV[0];
 const work = ARGV[1];
-const helper = work + '/software-io';
+const helper = target == 'versions' ? '/usr/libexec/podkop-config-auto-updater/software-io' : work + '/software-io';
 const statusPath = '/tmp/podkop-config-auto-updater/software.json';
 let repository = target == 'self' ? 'hayOfLife/podkop-config-auto-updater' : 'itdoginfo/podkop';
 let variant;
@@ -28,10 +28,23 @@ function run(args, timeout) {
 }
 
 function version(name) {
-	if (run(['version', name, work]) != 0) die('package_query_failed');
+	if (run(['version', name, work], target == 'versions' ? 5000 : null) != 0) die('package_query_failed');
 	let value = trim(fs.readfile(work + '/version') || '');
 	if (value && (!match(value, /^v?[0-9]+\.[0-9]+\.[0-9]+(-r[0-9]+)?$/) || match(value, /[[:space:][:cntrl:]]/))) die('invalid_installed_version');
 	return value;
+}
+
+function installedVersions() {
+	let result = { state: 'versions', updater_version: null, stable_version: null, experimental_version: null, errors: {} };
+	let packages = { updater: 'luci-app-podkop-config-auto-updater', stable: 'podkop', experimental: 'podkop-exp' };
+	for (let name, packageName in packages) {
+		try { result[name + '_version'] = version(packageName) || null; }
+		catch (error) {
+			let code = split(error.message || '', '\n')[0];
+			result.errors[name] = index(['package_query_failed', 'invalid_installed_version'], code) >= 0 ? code : 'package_query_failed';
+		}
+	}
+	return result;
 }
 
 function newer(candidate, current) {
@@ -63,6 +76,7 @@ function backup(configs) {
 }
 
 try {
+	if (target == 'versions') { print(sprintf('%J\n', installedVersions())); exit(0); }
 	if (index(['self', 'podkop'], target) < 0) die('invalid_target');
 	if (pending()) die('pending_changes');
 	if (run(['platform', work]) != 0) die('unsupported_platform');
