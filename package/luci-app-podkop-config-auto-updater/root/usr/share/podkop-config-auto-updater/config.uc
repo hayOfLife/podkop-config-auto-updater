@@ -1,10 +1,11 @@
 import * as core from 'core';
 import { validateNative, nativeFields, selectNative, mergeNative } from 'experimental';
+import { mergeDnsServers } from 'dns';
 
 const listFields = ['urltest_proxy_links', 'user_domains', 'user_subnets'];
 const settingsFields = ['dns_type', 'dns_server', 'bootstrap_dns_server', 'download_lists_via_proxy',
 	'update_interval', 'download_lists_via_proxy_section'];
-const nativeSettingsFields = ['config_version', 'urltest_check_interval', 'urltest_tolerance',
+const nativeSettingsFields = ['config_version', 'dns_mode', 'urltest_check_interval', 'urltest_tolerance',
 	'urltest_testing_url', 'urltest_download_check', 'urltest_download_url'];
 const oldExitFields = ['connection_type', 'proxy_config_type', 'proxy_string', 'outbound_json', 'selector_proxy_links',
 	'urltest_proxy_links', 'urltest_fallback_links', 'enable_udp_over_tcp', 'detour', 'interface', 'group',
@@ -74,6 +75,7 @@ function operation(value) {
 function validateSetting(key, value) {
 	if (match(value, /[[:space:][:cntrl:]]/)) die('invalid_setting');
 	if (key == 'dns_type' && index(['udp', 'doh', 'dot'], value) < 0) die('invalid_dns_type');
+	if (key == 'dns_mode' && index(['order', 'fastest'], value) < 0) die('invalid_dns_mode');
 	if (key == 'download_lists_via_proxy' && index(['0', '1'], value) < 0) die('invalid_flag');
 	if (key == 'update_interval' && index(['1h', '3h', '12h', '1d', '3d'], value) < 0) die('invalid_list_interval');
 	if (key == 'download_lists_via_proxy_section' && !match(value, /^[A-Za-z0-9_]+$/)) die('invalid_proxy_section');
@@ -95,7 +97,7 @@ export function validateConfig(input) {
 	let native = input.schema_version === 4 ? validateNative(input) : null;
 	let groups = configGroups(input);
 	for (let key in keys(input))
-		if (index(['schema_version', 'revision', ...groups, ...(native ? ['sources', 'members', 'replace_members'] : [])], key) < 0) die('unknown_field');
+		if (index(['schema_version', 'revision', ...groups, ...(native ? ['sources', 'members', 'replace_members', 'dns_servers'] : [])], key) < 0) die('unknown_field');
 	let result = { sections: {}, settings: {}, revision: input.revision, ordered: input.schema_version >= 3, native };
 	for (let group in groups) {
 		let lists = { schema_version: 1, section: 'main', revision: input.revision,
@@ -105,6 +107,7 @@ export function validateConfig(input) {
 		for (let key, value in input[group]) {
 			if (index(key, '\u0000') >= 0 || match(key, /[[:space:][:cntrl:]]/) || !match(key, /^[a-z][a-z0-9_]{0,63}$/)) die('invalid_option_name');
 			if (group == 'settings' && index([...settingsFields, ...(native ? nativeSettingsFields : [])], key) < 0) die('unsupported_setting');
+			if (group == 'settings' && key == 'dns_mode' && type(value) != 'string') die('invalid_dns_mode');
 			if (native && group != 'settings' && index(oldExitFields, key) >= 0) die('invalid_native_rule');
 			if (group != 'settings' && index(listFields, key) >= 0) { lists[key] = value; continue; }
 			if (group != 'settings' && index(['user_domains_text', 'user_subnets_text'], key) >= 0) {
@@ -233,11 +236,18 @@ function valueIndex(key, values) {
 	return indexed;
 }
 
-export function mergeConfig(main, settings, feed, allowDeletes, ignored, restricted, nativeCurrent) {
+export function mergeConfig(main, settings, feed, allowDeletes, ignored, restricted, nativeCurrent, runtime) {
 	let current = { main, settings, notUnderSanctions: restricted || {} };
 	ignored = map(ignored || [], canonicalField);
 	if (!feed.native && settings.config_version == '2') die('experimental_config_required');
+	let dns = feed.native && (feed.native.dns_servers || exists(feed.settings, 'dns_mode')) ?
+		mergeDnsServers(feed.native.dns_servers, nativeCurrent, allowDeletes, runtime) : null;
 	let native = feed.native ? mergeNative(feed.native, nativeCurrent, allowDeletes, ignored) : null;
+	if (dns) {
+		for (let name, patch in dns.patches) { native.patches[name] = patch; native.types[name] = dns.types[name]; }
+		for (let key, count in dns.counts) native.counts[key] += count;
+		native.dns = dns.metadata;
+	}
 	let activeMoves = [], sourceIndexes = {};
 	for (let move in feed.moves || sectionMoves(feed)) {
 		let field = move.source + '.' + move.key;

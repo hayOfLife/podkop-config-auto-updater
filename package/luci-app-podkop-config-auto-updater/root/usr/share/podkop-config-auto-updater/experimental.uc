@@ -1,3 +1,5 @@
+import { validateDnsServers } from 'dns';
+
 const rules = ['main', 'notUnderSanctions'];
 const sourceFields = ['type', 'label', 'url', 'update_interval'];
 const memberFields = ['section', 'source', 'role', 'include', 'exclude', 'via'];
@@ -56,7 +58,10 @@ export function validateNative(input) {
 			die('invalid_native_membership');
 		seen[rule] = true;
 	}
-	return { sources, members, replace_members: replace };
+	let dns = exists(input, 'dns_servers') ? validateDnsServers(input.dns_servers) : null;
+	for (let row in dns || [])
+		if (exists(sources, row.name) || exists(members, row.name)) die('native_section_collision');
+	return { sources, members, replace_members: replace, dns_servers: dns };
 };
 
 export function nativeFields(input) {
@@ -65,11 +70,13 @@ export function nativeFields(input) {
 		for (let name, values in input[group])
 			for (let key in keys(values)) push(fields, group + '.' + name + '.' + key);
 	for (let rule in input.replace_members || []) push(fields, 'membership.' + rule);
+	if (exists(input, 'dns_servers')) push(fields, 'settings.dns_servers');
 	return fields;
 };
 
 export function selectNative(native, ignored) {
 	let result = { sources: {}, members: {}, replace_members: native.replace_members, original: native };
+	result.dns_servers = index(ignored, 'settings.dns_servers') < 0 ? native.dns_servers : null;
 	for (let group in ['sources', 'members']) {
 		for (let name, values in native[group]) {
 			result[group][name] = {};

@@ -99,6 +99,7 @@ action="$1"; shift
 case "$action" in
  status|info)
   for arg do name="$arg"; done
+  printf '%s\\n' "$name" >> /fixtures/version-queries
   [ -f "/fixtures/installed/$name" ] || exit 1
   value="$(cat "/fixtures/installed/$name")"
   if [ "$kind" = opkg ]; then printf 'Version: %s\\n' "$value";
@@ -201,7 +202,62 @@ esac
     assert (root / 'etc/config/podkop').read_bytes() == before_podkop
     metadata = json.loads((root / 'tmp/podkop-config-auto-updater/fields.json').read_text())
     assert metadata == {'fields': ['main.user_domains']}
+    assert not (root / 'fixtures/version-queries').exists(), 'Legacy feeds must not query installed packages'
     checks += 1
+
+    dns_feed = {'schema_version': 4, 'revision': 'dns-version-gate', 'main': {}, 'notUnderSanctions': {},
+                'settings': {'dns_mode': 'order'}, 'sources': {}, 'members': {}, 'dns_servers': [
+                    {'name': 'dns_google', 'type': 'doh', 'server': 'dns.google/dns-query'},
+                    {'name': 'dns_provider', 'type': 'provider'}]}
+    for manager_kind in ['opkg', 'apk']:
+        for experimental, stable, succeeds in [('0.8.8-r1', '', False), ('', '0.7.24-r1', False),
+                                               ('', '', False), ('0.8.9-r1', '0.7.24-r1', False),
+                                               ('0.8.9-r1', '', True), ('0.9.0-r2', '', True)]:
+            reset(manager_kind)
+            write('/etc/init.d/podkop', '#!/bin/sh\nprintf "restart\\n" >> /fixtures/calls\n', True)
+            write('/etc/config/podkop', "config settings 'settings'\n option config_version '2'\n"
+                  "config section 'main'\nconfig dns_server 'dns_old'\n option type 'udp'\n option server '192.0.2.53'\n")
+            write('/etc/config/podkop_config_auto_updater',
+                  "config settings 'main'\n option enabled '0'\n option allow_deletes '1'\n"
+                  " option config_url 'https://example.test/dns.json'\n")
+            write('/fixtures/feed.json', json.dumps(dns_feed))
+            if experimental: write('/fixtures/installed/podkop-exp', experimental)
+            if stable: write('/fixtures/installed/podkop', stable)
+            before_config = (root / 'etc/config/podkop').read_bytes()
+            code, report = command('run', 'update')
+            assert (root / 'fixtures/version-queries').read_text() == 'podkop-exp\npodkop\n'
+            if succeeds:
+                assert code == 0 and report['state'] == 'applied', (manager_kind, experimental, report)
+                applied_config = (root / 'etc/config/podkop').read_text()
+                assert "config dns_server 'dns_google'" in applied_config and "config dns_server 'dns_provider'" in applied_config
+                assert 'dns_old' not in applied_config and "option dns_mode 'order'" in applied_config
+                assert (root / 'fixtures/calls').read_text() == 'restart\n'
+                code, repeated = command('run', 'update')
+                assert code == 0 and repeated['state'] == 'unchanged', repeated
+                assert (root / 'fixtures/calls').read_text() == 'restart\n'
+            else:
+                assert code == 1 and report['error'] == 'experimental_dns_version_required', (manager_kind, experimental, stable, report)
+                assert (root / 'etc/config/podkop').read_bytes() == before_config
+                assert not (root / 'fixtures/calls').read_text()
+            checks += 1
+
+    for with_ignored_dns in [False, True]:
+        reset()
+        write('/etc/init.d/podkop', '#!/bin/sh\nexit 0\n', True)
+        write('/etc/config/podkop', "config settings 'settings'\n option config_version '2'\nconfig section 'main'\n")
+        write('/etc/config/podkop_config_auto_updater', "config settings 'main'\n option config_url 'https://example.test/dns.json'\n" +
+              (" list ignored_options 'settings.dns_servers'\n list ignored_options 'settings.dns_mode'\n" if with_ignored_dns else ''))
+        feed = dict(dns_feed)
+        if not with_ignored_dns:
+            del feed['dns_servers']
+            feed['settings'] = {}
+        write('/fixtures/feed.json', json.dumps(feed))
+        before_config = (root / 'etc/config/podkop').read_bytes()
+        code, report = command('run', 'update')
+        assert code == 0 and report['state'] == 'unchanged', report
+        assert (root / 'etc/config/podkop').read_bytes() == before_config
+        assert not (root / 'fixtures/version-queries').exists(), 'Unselected new DNS settings must not query packages'
+        checks += 1
 
     def wait_config():
         for attempt in range(200):

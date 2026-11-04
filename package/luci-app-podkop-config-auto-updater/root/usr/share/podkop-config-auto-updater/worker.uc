@@ -8,6 +8,7 @@ import { applyPatch, atomicWrite, writePrivate } from 'transaction';
 const statePath = '/tmp/podkop-config-auto-updater/schedule.json';
 const statusPath = '/tmp/podkop-config-auto-updater/status.json';
 const helper = '/usr/libexec/podkop-config-auto-updater/io';
+const softwareHelper = '/usr/libexec/podkop-config-auto-updater/software-io';
 const work = ARGV[1];
 const testing = ARGV[0] == 'test';
 let config = cursor().get_all('podkop_config_auto_updater', 'main') || {};
@@ -73,6 +74,11 @@ function fetchFeed() {
 	return feed;
 }
 
+function installedVersion(name) {
+	if (system([softwareHelper, 'version', name, work], 5000) != 0) die('package_query_failed');
+	return trim(fs.readfile(work + '/version') || '');
+}
+
 function update() {
 	if (!fs.stat('/etc/init.d/podkop')) die('podkop_missing');
 	if (pending()) die('pending_changes');
@@ -87,8 +93,11 @@ function update() {
 	let section = podkop.get_all('podkop', 'main') || {};
 	let nativeCurrent = {};
 	if (feed.native) podkop.foreach('podkop', null, entry => { nativeCurrent[entry['.name']] = entry; });
+	let runtime = null;
+	if (feed.native && (feed.native.dns_servers || exists(feed.settings, 'dns_mode')))
+		runtime = { experimental: installedVersion('podkop-exp'), stable: installedVersion('podkop') };
 	let merged = mergeConfig(section, podkop.get_all('podkop', 'settings') || {}, feed, config.allow_deletes == '1', ignored,
-		podkop.get_all('podkop', 'notUnderSanctions') || {}, nativeCurrent);
+		podkop.get_all('podkop', 'notUnderSanctions') || {}, nativeCurrent, runtime);
 	let changed = applyPatch({ work, config: '/etc/config/podkop', backup: '/tmp/podkop-config-auto-updater/previous-podkop' },
 		merged.patches, original, pending, () => {
 			status({ state: 'running', stage: 'restarting', revision: feed.revision });

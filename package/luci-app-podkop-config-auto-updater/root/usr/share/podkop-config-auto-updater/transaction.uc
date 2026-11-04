@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
 import { validateNativeCursor } from 'experimental';
+import { requireDnsVersion, validateDnsCursor, orderDnsCursor } from 'dns';
 
 export function writePrivate(path, data) {
 	if (fs.writefile(path, data) !== length(data) || !fs.chmod(path, 0600)) die('write_failed');
@@ -124,7 +125,8 @@ export function resetConfig(paths, original, stock, native, pending, service) {
 };
 
 export function applyPatch(paths, patches, original, pending, restart, order, native) {
-	let changed = length(native?.delete_sections || []) > 0;
+	if (native?.dns) requireDnsVersion(native.dns.runtime);
+	let changed = length(native?.delete_sections || []) > 0 || length(native?.dns?.delete_sections || []) > 0;
 	for (let section, patch in patches)
 		if (length(keys(patch))) changed = true;
 	if (!changed && !order) return false;
@@ -138,6 +140,10 @@ export function applyPatch(paths, patches, original, pending, restart, order, na
 		for (let name in native.delete_sections) {
 			if (staged.get('podkop', name) != 'member' || index(native.replace_members, staged.get('podkop', name, 'section')) < 0)
 				die('invalid_native_membership');
+			if (!staged.delete('podkop', name)) die('write_failed');
+		}
+		for (let name in native.dns?.delete_sections || []) {
+			if (staged.get('podkop', name) != 'dns_server') die('invalid_dns_servers');
 			if (!staged.delete('podkop', name)) die('write_failed');
 		}
 	}
@@ -161,6 +167,7 @@ export function applyPatch(paths, patches, original, pending, restart, order, na
 		if (exists(positions, order[0]) && exists(positions, order[1]) && positions[order[0]] > positions[order[1]] &&
 			!staged.reorder('podkop', order[0], positions[order[1]])) die('write_failed');
 	}
+	if (native?.dns) { orderDnsCursor(staged, native.dns); validateDnsCursor(staged, native.dns); }
 	if (native) validateNativeCursor(staged, native);
 	else {
 		let route = staged.get('podkop', 'settings', 'download_lists_via_proxy_section');

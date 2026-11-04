@@ -38,6 +38,10 @@ var errors = {
 	invalid_ignored_options: 'Повреждён локальный список параметров, запрещённых к применению. Пересохраните галочки применения настроек.',
 	experimental_version_required: 'Этот конфиг требует установленного Podkop Experimental 0.8.8 с новым форматом источников. Обновите Podkop и дождитесь штатной миграции его настроек.',
 	experimental_config_required: 'В Podkop Experimental используется новый формат источников. Укажите экспериментальный файл схемы 4 вместо прежнего split.json.',
+	experimental_dns_version_required: 'Новый список DNS и режим его опроса требуют Podkop Experimental 0.8.9 или новее. Настройки не применены. Используйте прежний split_experimental.json для 0.8.8 либо обновите Podkop.',
+	invalid_dns_servers: 'Проверьте список DNS: нужны уникальные имена, допустимые типы и адреса. Для DNS провайдера адрес не задаётся.',
+	invalid_dns_mode: 'Режим опроса DNS должен быть order («По порядку») либо fastest («Сначала самый быстрый»).',
+	dns_delete_disabled: 'Для замены прежнего списка DNS разрешите автоматическое применение удалений. Настройки не применены.',
 	invalid_native_sections: 'Проверьте имена и структуру источников подписок и строк серверов в экспериментальном конфиге.',
 	invalid_native_option: 'В настройке источника или строки серверов неверный тип либо недопустимые символы.',
 	invalid_native_source: 'Проверьте HTTPS-ссылку, тип и интервал обновления источника подписки.',
@@ -296,6 +300,8 @@ return view.extend({
 			'main.remote_subnet_lists': 'Удалённые списки подсетей',
 			'settings.dns_type': 'Тип протокола DNS',
 			'settings.dns_server': 'DNS-сервер',
+			'settings.dns_servers': 'DNS-серверы (Experimental 0.8.9+)',
+			'settings.dns_mode': 'Как опрашивать DNS-серверы (Experimental 0.8.9+)',
 			'settings.bootstrap_dns_server': 'Bootstrap DNS-сервер',
 			'settings.download_lists_via_proxy': 'Скачивать списки через Proxy/VPN',
 			'settings.update_interval': 'Частота обновления списков',
@@ -336,6 +342,8 @@ return view.extend({
 			var control = section.option(form.Flag, '_apply_' + field.replace(/\./g, '_'), label);
 			control.default = '1';
 			control.rmempty = false;
+			if (field === 'settings.dns_servers' || field === 'settings.dns_mode')
+				control.description = 'Только Podkop Experimental 0.8.9+. Перед применением программа проверяет версию установленного пакета; на более старой версии операция отклоняется до записи настроек.';
 			control.cfgvalue = function(sectionId) { return ignoredOptions(sectionId).indexOf(field) < 0 ? '1' : '0'; };
 			control.write = function(sectionId, value) {
 				var ignored = ignoredOptions(sectionId).filter(function(item) { return item !== field; });

@@ -111,6 +111,59 @@ rejects(() => applyPatch(paths, nativeMerged.patches, otherRuleMember, () => fal
 	nativeMerged.order, nativeMerged.native), 'native transaction cannot steal an unrelated member id');
 check(fs.readfile(paths.config) == otherRuleMember, 'unrelated member id collision preserves original file');
 
+let dnsOriginal = nativeOriginal + "config dns_server 'dns_provider'\n option type 'udp'\n option server '192.0.2.53'\nconfig source 'manual_source'\n option type 'links'\n list link 'vless://manual@example.test:443'\nconfig dns_server 'dns_obsolete'\n option type 'dot'\n option server 'old-dns.example'\nconfig section 'manual_rule'\n option manual 'preserve'\n";
+let dnsInput = { ...nativeInput, settings: { ...nativeInput.settings, dns_mode: 'order' }, dns_servers: [
+	{ name: 'dns_cloudflare', type: 'doh', server: 'cloudflare-dns.com/dns-query' },
+	{ name: 'dns_yandex', type: 'dot', server: 'common.dot.dns.yandex.net' },
+	{ name: 'dns_provider', type: 'provider' }
+] };
+let dnsRuntime = { experimental: '0.8.9-r1', stable: '' };
+function dnsMerge(runtime) {
+	let stored = cursor(root, root + '/work/delta'), current = {};
+	stored.foreach('podkop', null, item => { current[item['.name']] = item; });
+	return mergeConfig(current.main || {}, current.settings || {}, selectConfig(dnsInput, []), true, [],
+		current.notUnderSanctions || {}, current, runtime);
+}
+writePrivate(paths.config, dnsOriginal);
+let dnsMerged = dnsMerge(dnsRuntime);
+restarts = 0;
+check(applyPatch(paths, dnsMerged.patches, dnsOriginal, () => false, () => { restarts++; return true; },
+	dnsMerged.order, dnsMerged.native), 'ordered DNS and native subscriptions apply in one transaction');
+let dnsStored = cursor(root, root + '/work/delta'), dnsNames = [], nonDnsNames = [];
+dnsStored.foreach('podkop', null, row => { push(row['.type'] == 'dns_server' ? dnsNames : nonDnsNames, row['.name']); });
+check(join(',', dnsNames) == 'dns_cloudflare,dns_yandex,dns_provider', 'UCI DNS order matches array with Yandex immediately before provider');
+check(dnsStored.get('podkop', 'dns_cloudflare') == 'dns_server' && dnsStored.get('podkop', 'dns_cloudflare', 'type') == 'doh', 'new DNS rows use the native dns_server type');
+check(dnsStored.get('podkop', 'dns_provider', 'type') == 'provider' && !dnsStored.get('podkop', 'dns_provider', 'server'), 'dynamic provider does not retain a fixed stale DNS address');
+check(!dnsStored.get('podkop', 'dns_obsolete') && dnsStored.get('podkop', 'settings', 'dns_mode') == 'order', 'complete replacement removes obsolete DNS and applies query order');
+check(index(nonDnsNames, 'manual_source') < index(nonDnsNames, 'manual_rule') && dnsStored.get('podkop', 'manual_rule', 'manual') == 'preserve' &&
+	dnsStored.get('podkop', 'manual_source', 'link')[0] == 'vless://manual@example.test:443', 'DNS ordering preserves unrelated sources, options and section order');
+let preservedNonDns = ['settings', 'old_source', 'main', 'other', 'other_member', 'manual_source', 'manual_rule'];
+check(join(',', filter(nonDnsNames, name => index(preservedNonDns, name) >= 0)) == join(',', preservedNonDns),
+	'all existing unrelated section types retain their mutual order during DNS replacement');
+check(restarts == 1 && fs.readfile(paths.backup) == dnsOriginal, 'DNS update restarts once and preserves exact rollback source');
+let dnsText = fs.readfile(paths.config), dnsRepeat = dnsMerge(dnsRuntime);
+check(!applyPatch(paths, dnsRepeat.patches, dnsText, () => false, () => { die('unexpected DNS restart'); },
+	dnsRepeat.order, dnsRepeat.native), 'identical DNS array and mode do not rewrite or restart Podkop');
+for (let runtime in [null, { experimental: '0.8.8-r1', stable: '' }, { experimental: '', stable: '0.7.24-r1' }]) {
+	writePrivate(paths.config, dnsOriginal);
+	rejects(() => dnsMerge(runtime), 'unknown, old or stable installed package rejects DNS before applying any patch');
+	check(fs.readfile(paths.config) == dnsOriginal, 'unsupported DNS package leaves exact router configuration unchanged');
+}
+writePrivate(paths.config, dnsOriginal);
+let invalidRuntime = { ...dnsMerged.native, dns: { ...dnsMerged.native.dns, runtime: { experimental: '0.8.8-r1', stable: '' } } };
+rejects(() => applyPatch(paths, dnsMerged.patches, dnsOriginal, () => false, () => true, dnsMerged.order, invalidRuntime),
+	'transaction independently requires proven installed DNS version');
+check(fs.readfile(paths.config) == dnsOriginal, 'missing transaction DNS version proof preserves original bytes');
+restarts = 0;
+rejects(() => applyPatch(paths, dnsMerged.patches, dnsOriginal, () => false, () => { restarts++; return restarts == 2; },
+	dnsMerged.order, dnsMerged.native), 'failed DNS restart rolls back DNS, sources, members and mode together');
+check(restarts == 2 && fs.readfile(paths.config) == dnsOriginal, 'DNS rollback restores complete original bytes and order');
+let dnsCollision = dnsOriginal + "config source 'dns_cloudflare'\n option type 'subscription'\n option url 'https://manual.example/sub'\n";
+writePrivate(paths.config, dnsCollision);
+rejects(() => applyPatch(paths, dnsMerged.patches, dnsCollision, () => false, () => true, dnsMerged.order, dnsMerged.native),
+	'transaction refuses a conflicting source named like a DNS row');
+check(fs.readfile(paths.config) == dnsCollision, 'DNS id collision does not partially delete old DNS or member rows');
+
 let stockLegacy = "config settings 'settings'\n option dns_type 'udp'\nconfig section 'main'\n option connection_type 'proxy'\n option proxy_config_type 'url'\n option proxy_string ''\n";
 let stockNative = "config settings 'settings'\n option config_version '2'\nconfig source 'src1'\nconfig section 'main'\nconfig member\n option section 'main'\n option source 'src1'\n option role 'server'\n";
 let stops = 0, starts = 0;

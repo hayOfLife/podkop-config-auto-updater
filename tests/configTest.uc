@@ -216,4 +216,76 @@ check(createdRules.patches.main.enabled == '1' && createdRules.patches.notUnderS
 let stolenMember = { ...nativeCurrent, main_provider: { '.type': 'member', section: 'other', source: 'old_source', role: 'server' } };
 rejectsCode(() => mergeConfig(nativeCurrent.main, nativeCurrent.settings, nativeFeed, true, [], {}, stolenMember),
 	'native_section_collision', 'native member id cannot steal another rule membership');
+let dnsRows = [
+	{ name: 'dns_cloudflare', type: 'doh', server: 'cloudflare-dns.com/dns-query' },
+	{ name: 'dns_yandex', type: 'dot', server: 'common.dot.dns.yandex.net' },
+	{ name: 'dns_provider', type: 'provider' }
+];
+let dnsInput = { ...createdRulesInput, dns_servers: dnsRows, settings: { dns_mode: 'order' } };
+let dnsCurrent = { ...nativeAgain,
+	dns_old: { '.type': 'dns_server', type: 'udp', server: '192.0.2.53' },
+	dns_provider: { '.type': 'dns_server', type: 'udp', server: '192.0.2.54' }
+};
+let dnsFeed = selectConfig(dnsInput, []);
+let dnsRuntime = { experimental: '0.8.9-r1', stable: '' };
+let dnsMerged = mergeConfig(dnsCurrent.main, dnsCurrent.settings, dnsFeed, true, [], dnsCurrent.notUnderSanctions, dnsCurrent, dnsRuntime);
+check(dnsMerged.native.types.dns_cloudflare == 'dns_server' && dnsMerged.patches.dns_provider.server == null,
+	'DNS rows have explicit UCI type and provider removes a stale fixed address');
+check(join(',', dnsMerged.native.dns.order) == 'dns_cloudflare,dns_yandex,dns_provider' &&
+	join(',', dnsMerged.native.dns.delete_sections) == 'dns_old', 'DNS replacement preserves requested order and declares only obsolete DNS deletion');
+check(dnsMerged.patches.settings.dns_mode == 'order', 'ordered DNS mode is a separate setting');
+check(length(filter(configFields(dnsInput), field => field == 'settings.dns_servers')) == 1 &&
+	index(configFields(dnsInput), 'settings.dns_mode') >= 0, 'DNS array exposes one checkbox plus independent mode');
+for (let runtime in [null, {}, { experimental: '', stable: '0.7.24-r1' },
+	{ experimental: '0.8.8-r1', stable: '' }, { experimental: '0.8.9-rc1', stable: '' },
+	{ experimental: '0.8.9-r1', stable: '0.7.24-r1' }])
+	rejectsCode(() => mergeConfig(dnsCurrent.main, dnsCurrent.settings, dnsFeed, true, [], dnsCurrent.notUnderSanctions, dnsCurrent, runtime),
+		'experimental_dns_version_required', 'DNS requires an unambiguous installed Experimental version >=0.8.9');
+for (let version in ['v0.8.9', '0.8.10-r2', '0.9.0-r1', '1.0.0'])
+	check(mergeConfig(dnsCurrent.main, dnsCurrent.settings, dnsFeed, true, [], dnsCurrent.notUnderSanctions,
+		dnsCurrent, { experimental: version, stable: '' }).native.dns != null, 'supported DNS package version: ' + version);
+rejectsCode(() => mergeConfig(dnsCurrent.main, dnsCurrent.settings, dnsFeed, false, [], dnsCurrent.notUnderSanctions, dnsCurrent, dnsRuntime),
+	'dns_delete_disabled', 'complete DNS replacement never partially applies while required deletion is forbidden');
+let dnsCollision = { ...dnsCurrent, dns_cloudflare: { '.type': 'source', type: 'subscription', url: 'https://manual.example/sub' } };
+rejectsCode(() => mergeConfig(dnsCurrent.main, dnsCurrent.settings, dnsFeed, true, [], dnsCurrent.notUnderSanctions, dnsCollision, dnsRuntime),
+	'native_section_collision', 'DNS id cannot overwrite a source or another UCI type');
+rejectsCode(() => validateConfig({ ...dnsInput, dns_servers: [{ name: 'provider', type: 'udp', server: '192.0.2.53' }] }),
+	'native_section_collision', 'DNS and declared subscription ids cannot collide');
+for (let rows in [[], null, [dnsRows[0], dnsRows[0]], [{ name: 'main', type: 'provider' }],
+	[{ name: 'dns_bad', type: 'provider', server: '192.0.2.53' }],
+	[{ name: 'dns_bad', type: 'dot', server: 'dns.example/path' }],
+	[{ name: 'dns_bad', type: 'udp', server: '192.0.2.53:65536' }],
+	[{ name: 'dns_bad', type: 'doh', server: 'https://dns.example/dns-query' }],
+	[{ name: 'dns_bad', type: 'doh', server: 'dns.example/dns-query\noption injected' }],
+	[{ name: 'dns_bad', type: 'doh', server: 'dns.example/dns-query', unknown: 'yes' }]])
+	rejectsCode(() => selectConfig({ ...dnsInput, dns_servers: rows }, ['settings.dns_servers']),
+		'invalid_dns_servers', 'even ignored DNS arrays require complete structural validation');
+rejectsCode(() => selectConfig({ ...dnsInput, settings: { dns_mode: 'random' } }, ['settings.dns_mode']),
+	'invalid_dns_mode', 'ignored DNS mode is still validated');
+rejectsCode(() => selectConfig({ ...dnsInput, settings: { dns_mode: { value: 'order', delete: true } } }, ['settings.dns_mode']),
+	'invalid_dns_mode', 'DNS mode rejects delete operations even when ignored');
+let tooManyDns = [];
+for (let i = 0; i < 33; i++) push(tooManyDns, { name: 'dns_' + i, type: 'udp', server: '192.0.2.53' });
+rejectsCode(() => validateConfig({ ...dnsInput, dns_servers: tooManyDns }), 'invalid_dns_servers', 'DNS array is limited to 32 ordered servers');
+let noDns = ['settings.dns_servers', 'settings.dns_mode'];
+check(!mergeConfig(nativeAgain.main, nativeAgain.settings, selectConfig(dnsInput, noDns), true, noDns,
+	nativeAgain.notUnderSanctions, nativeAgain).native.dns, 'both DNS checkboxes disabled preserve old-version compatibility and require no runtime query');
+let modeOnly = selectConfig({ ...dnsInput, dns_servers: dnsRows }, ['settings.dns_servers']);
+check(mergeConfig(nativeAgain.main, nativeAgain.settings, modeOnly, true, ['settings.dns_servers'],
+	nativeAgain.notUnderSanctions, nativeAgain, dnsRuntime).native.dns.rows == null, 'DNS mode can apply independently without replacing rows');
+rejectsCode(() => mergeConfig(nativeAgain.main, nativeAgain.settings, modeOnly, true, ['settings.dns_servers'],
+	nativeAgain.notUnderSanctions, nativeAgain), 'experimental_dns_version_required', 'mode alone still requires actual installed DNS support');
+let dnsAgain = {};
+for (let name, values in dnsCurrent) dnsAgain[name] = { ...values };
+for (let name in [...dnsMerged.native.delete_sections, ...dnsMerged.native.dns.delete_sections]) delete dnsAgain[name];
+for (let name, patch in dnsMerged.patches) {
+	dnsAgain[name] = { ...(dnsAgain[name] || {}), '.type': dnsMerged.native.types[name] || (name == 'settings' ? 'settings' : 'section') };
+	for (let key, value in patch) { if (value == null) delete dnsAgain[name][key]; else dnsAgain[name][key] = value; }
+}
+let dnsRepeat = mergeConfig(dnsAgain.main, dnsAgain.settings, dnsFeed, true, [], dnsAgain.notUnderSanctions, dnsAgain, dnsRuntime);
+check(!length(filter(keys(dnsRepeat.patches), name => length(keys(dnsRepeat.patches[name])))) &&
+	!length(dnsRepeat.native.dns.delete_sections), 'DNS types, addresses, provider and mode merge idempotently');
+let dnsExample = validateConfig(json(readfile('examples/experimental-dns.json')));
+check(length(dnsExample.native.dns_servers) == 4 && dnsExample.settings.dns_mode.entry.value == 'order',
+	'published synthetic DNS example passes the actual config validator');
 printf('config: %d checks passed\n', passed);

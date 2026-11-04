@@ -424,4 +424,22 @@ assert.match(reset.notifications.at(-1).text, /Штатные настройки
 assert.match(reset.notifications.at(-1).text, /Сброс выполнен:/);
 checks++;
 
+const dnsOptions = await fixture(() => Promise.resolve({code: 0, stdout: '{}'}), {}, ['settings.dns_servers', 'settings.dns_mode']);
+for (const name of ['_apply_settings_dns_servers', '_apply_settings_dns_mode']) {
+	assert.match(dnsOptions.options[name].title, /Experimental 0\.8\.9\+/);
+	assert.match(dnsOptions.options[name].description, /проверяет версию установленного пакета/);
+	assert.equal(dnsOptions.options[name].default, '1');
+}
+dnsOptions.options._apply_settings_dns_servers.write('main', '0');
+assert.deepEqual([...dnsOptions.settings.ignored_options], ['settings.dns_servers']);
+assert.equal(dnsOptions.calls.length, 0);
+checks++;
+
+const oldDnsVersion = await fixture((path, args) => Promise.resolve({code: 0, stdout: JSON.stringify(args[0] === 'update-start' ?
+	{state: 'running', operation: 'run.dns'} : {state: 'error', operation: 'run.dns', error: 'experimental_dns_version_required'})}));
+await find(oldDnsVersion.tree, 'Обновить сейчас').attributes.click();
+assert.match(oldDnsVersion.notifications.at(-1).text, /требуют Podkop Experimental 0\.8\.9 или новее/);
+assert.match(oldDnsVersion.notifications.at(-1).text, /Настройки не применены/);
+checks++;
+
 console.log(`LuCI actions: ${checks} command routing, popup, selection and background completion scenarios passed`);
