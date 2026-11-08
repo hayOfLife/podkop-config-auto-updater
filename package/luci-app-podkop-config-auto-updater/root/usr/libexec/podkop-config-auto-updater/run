@@ -8,19 +8,20 @@ case "${1:-}" in
 	status)
 		exec 8>"$runtime/update.lock"
 		if flock -n 8; then active=0; else active=1; fi
-		ucode -e 'import { readfile } from "fs"; import { cursor } from "uci"; function load(path) { try { return json(readfile(path)) || {}; } catch(e) { return {}; } } let s = load("/tmp/podkop-config-auto-updater/status.json"); if (s.state == "running" && ARGV[0] == "0") { s.state = "error"; s.error = "update_interrupted"; } let p = load("/tmp/podkop-config-auto-updater/schedule.json"); let c = cursor(); s.enabled = c.get("podkop_config_auto_updater", "main", "enabled") == "1"; s.openai_check_enabled = c.get("podkop_config_auto_updater", "main", "openai_check_enabled") != "0"; s.health = load("/tmp/podkop-config-auto-updater/health.json"); s.ipv6_error = !!readfile("/tmp/podkop-config-auto-updater/ipv6-error"); s.next_run = p.next; s.fields = load("/tmp/podkop-config-auto-updater/fields.json").fields || []; print(sprintf("%J\n", s));' "$active"
+		ucode -e 'import { readfile } from "fs"; import { cursor } from "uci"; function load(path) { try { return json(readfile(path)) || {}; } catch(e) { return {}; } } let s = load("/tmp/podkop-config-auto-updater/status.json"); if (s.state == "running" && ARGV[0] == "0") { s.state = "error"; s.error = "update_interrupted"; } let p = load("/tmp/podkop-config-auto-updater/schedule.json"); let c = cursor(); s.enabled = c.get("podkop_config_auto_updater", "main", "enabled") == "1"; s.openai_check_enabled = c.get("podkop_config_auto_updater", "main", "openai_check_enabled") != "0"; s.subscriptions_enabled = c.get("podkop_config_auto_updater", "main", "subscriptions_enabled") != "0"; s.subscriptions = load("/tmp/podkop-config-auto-updater/subscriptions-status.json"); s.health = load("/tmp/podkop-config-auto-updater/health.json"); s.ipv6_error = !!readfile("/tmp/podkop-config-auto-updater/ipv6-error"); s.next_run = p.next; s.fields = load("/tmp/podkop-config-auto-updater/fields.json").fields || []; print(sprintf("%J\n", s));' "$active"
 		exit 0 ;;
 	daemon)
 		while :; do
 			"$0" tick >/dev/null 2>&1 || true
+			"$0" subscriptions-tick >/dev/null 2>&1 || true
 			"$0" health-tick >/dev/null 2>&1 || true
 			sleep 30
 		done ;;
-	update|update-start|reset|reset-start|tick|test|health-tick|health-release) ;;
+	update|update-start|reset|reset-start|tick|test|health-tick|health-release|subscriptions-tick|subscriptions-test|subscriptions-update) ;;
 	*) exit 2 ;;
 esac
 case "$1" in
-	update|update-start|reset|reset-start|tick)
+	update|update-start|reset|reset-start|tick|subscriptions-tick|subscriptions-test|subscriptions-update)
 		exec 8>"$runtime/update.lock"
 		flock -n 8 || { printf '{"state":"error","error":"busy"}\n'; exit 1; }
 		;;
@@ -53,6 +54,8 @@ if [ "$1" = update-start ] || [ "$1" = reset-start ]; then
 fi
 case "$1" in
 	reset) ucode -L /usr/share/podkop-config-auto-updater /usr/share/podkop-config-auto-updater/reset-worker.uc "$work" ;;
+	subscriptions-tick|subscriptions-test|subscriptions-update)
+		ucode -L /usr/share/podkop-config-auto-updater /usr/share/podkop-config-auto-updater/subscriptions-worker.uc "${1#subscriptions-}" "$work" ;;
 	health-tick|health-release)
 		ucode -L /usr/share/podkop-config-auto-updater /usr/share/podkop-config-auto-updater/health-worker.uc "${1#health-}" "$work"
 		;;

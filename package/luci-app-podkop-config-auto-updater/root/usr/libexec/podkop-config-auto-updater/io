@@ -2,14 +2,28 @@
 set -eu
 exec 8>&- 9>&-
 case "$1" in
-	download|reset-default)
+	browsec-auth)
+		work="$2"
+		curl --disable --silent --show-error --fail --proto '=https' --max-redirs 0 \
+			--connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+			--header "@$work/headers" --data-binary "@$work/auth-request" \
+			--output "$work/auth-response.json" -- 'https://browsec.com/api/v1/authentication' 2>/dev/null
+		;;
+	download|reset-default|subscription-download)
 		work="$2"
 		if [ "$1" = reset-default ]; then output="$work/default-podkop"; else output="$work/feed.json"; fi
 		curl_status=0
-		code="$(curl --disable --silent --fail --proto '=https' --max-redirs 0 \
-			--connect-timeout 15 --max-time 60 --max-filesize 1048576 \
-			--header "@$work/headers" --output "$output" \
-			--write-out '%{http_code}' -- "$3" 2>/dev/null)" || curl_status="$?"
+		if [ "$1" = subscription-download ]; then
+			code="$(curl --disable --silent --fail --proto '=https' --max-redirs 0 \
+				--connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+				--config "$work/subscription-curl" --header "@$work/headers" --output "$output" \
+				--write-out '%{http_code}' 2>/dev/null)" || curl_status="$?"
+		else
+			code="$(curl --disable --silent --fail --proto '=https' --max-redirs 0 \
+				--connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+				--header "@$work/headers" --output "$output" \
+				--write-out '%{http_code}' -- "$3" 2>/dev/null)" || curl_status="$?"
+		fi
 		error=download_failed
 		case "$curl_status" in
 			5) error=download_proxy_dns_failed ;;

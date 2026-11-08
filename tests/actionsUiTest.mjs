@@ -22,7 +22,7 @@ async function fixture(exec, initial = {}, fields = ['main.future_option', 'sett
 	let mapDescription;
 	class FormMap {
 		constructor(name, title, description) { mapDescription = description; }
-		section() { return {option(type, name, title) { return options[name] = {title, value() {}}; }}; }
+		section() { return {option(type, name, title) { return options[name] = {title, choices: [], value(...args) { this.choices.push(args); }, depends() {}}; }}; }
 		render() {
 			const form = element('form', {}, Object.values(options).map(option => option.description));
 			form.querySelector = selector => selector === '#podkop-updater-enabled' ? enabledNode : null;
@@ -42,6 +42,24 @@ async function fixture(exec, initial = {}, fields = ['main.future_option', 'sett
 	});
 	const tree = await view.render({enabled: true, software: {state: 'idle'}, fields, ...extraStatus});
 	return {tree, calls, modals, modalContents, notifications, timers, options, enabledNode, settings, mapDescription, view};
+}
+
+{
+	const configured = await fixture(() => Promise.resolve({code: 0, stdout: '{}'}));
+	assert.deepEqual(configured.options.provider.choices.map(choice => choice[0]), ['browsec', 'subix']);
+	assert.equal(configured.options.subscriptions_enabled.default, '1');
+	assert.equal(configured.options.password.password, true);
+	assert.equal(configured.options.url.password, true);
+	assert.equal(configured.options.login.modalonly, true);
+	assert.equal(configured.options.password.modalonly, true);
+	assert.equal(configured.options.url.modalonly, true);
+	assert.match(configured.options.password.description, /HTTPS/);
+	const failure = await fixture(() => Promise.resolve({code: 0, stdout: '{}'}), {}, [], {
+		subscriptions_enabled: true,
+		subscriptions: {state: 'error', accounts: {first: {provider: 'browsec', state: 'error', error: 'browsec_auth_failed'}}}
+	});
+	assert.match(flatten(failure.tree), /Не удалось войти в Browsec/);
+	assert.match(flatten(failure.tree), /прежние серверы сохранены/i);
 }
 
 for (const terminal of ['applied', 'unchanged', 'error']) {

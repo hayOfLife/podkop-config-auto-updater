@@ -209,6 +209,49 @@ function statusText(status) {
 	return text;
 }
 
+function subscriptionsText(status) {
+	if (!status.enabled || status.subscriptions_enabled === false) return 'Обновление подписок выключено.';
+	var result = status.subscriptions || {};
+	var messages = {
+		applied: 'Серверы подписок обновлены.',
+		unchanged: 'Списки серверов подписок не изменились.',
+		error: 'Не удалось обновить одну или несколько подписок. Их прежние серверы сохранены.'
+	};
+	var text = messages[result.state] || 'Обновление подписок: ожидание первой проверки или добавления подписки.';
+	var details = {
+		browsec_auth_failed: 'Не удалось войти в Browsec или подтвердить Premium.',
+		browsec_credentials_missing: 'Укажите логин и пароль Browsec.',
+		subix_invalid_url: 'Проверьте полную ссылку Subix.',
+		subscription_insecure_permissions: 'Ограничьте доступ к файлу настроек приложения.',
+		pending_changes: 'Сначала сохраните или отмените несохранённые изменения Podkop.',
+		download_dns_failed: 'Не удалось определить адрес сервера подписки.',
+		download_proxy_dns_failed: 'Не удалось определить адрес прокси для загрузки.',
+		download_connect_failed: 'Не удалось подключиться к серверу подписки.',
+		download_timeout: 'Время ожидания загрузки подписки истекло.',
+		download_certificate_failed: 'Не удалось проверить сертификат сервера подписки.',
+		download_tls_failed: 'Не удалось установить защищённое соединение.',
+		download_http_unauthorized: 'Сервер подписки отклонил авторизацию.',
+		download_http_forbidden: 'Сервер подписки отказал в доступе.',
+		download_http_not_found: 'Файл подписки не найден.',
+		download_http_rate_limited: 'Сервер подписки ограничил частоту запросов.',
+		download_http_server_error: 'Сервер подписки вернул ошибку.',
+		subix_invalid_response: 'Формат ответа Subix не распознан.',
+		browsec_invalid_response: 'Формат ответа Browsec не распознан.',
+		subix_incomplete_response: 'Subix вернул неполный список серверов.',
+		browsec_incomplete_response: 'Browsec вернул неполный список серверов.'
+	};
+	if (result.error) text += '\n' + (details[result.error] || 'Проверьте настройки и доступ к провайдеру.');
+	Object.keys(result.accounts || {}).forEach(function(id) {
+		var account = result.accounts[id] || {};
+		var name = account.provider === 'browsec' ? 'Browsec Premium' : account.provider === 'subix' ? 'Subix (VPN1)' : 'Подписка';
+		if (account.state === 'error') text += '\n' + name + ': ' + (details[account.error] || 'Проверьте настройки и доступ к провайдеру.');
+		else if (Number.isFinite(account.count)) text += '\n' + name + ': серверов ' + account.count + (account.skipped ? ', пропущено неподдерживаемых: ' + account.skipped : '') + '.';
+	});
+	if (Number.isFinite(result.last_success) && result.last_success > 0)
+		text += '\nПоследнее успешное обновление: ' + new Date(result.last_success * 1000).toLocaleString('ru-RU') + ' (время вашего браузера).';
+	return text;
+}
+
 function healthText(status) {
 	var health = status.health || {};
 	var disabled = status.enabled === false ? 'Контроль OpenAI выключен вместе с программой.' :
@@ -292,6 +335,10 @@ return view.extend({
 		option.description = 'При включённой программе проверяет OpenAI раз в 3 минуты без API-ключа и управляет выбором узла только в notUnderSanctions. ' +
 			'Сетевые ошибки перепроверяются; при ограничении частоты запросов делается пауза. ' +
 			'В этой секции контроллер выбирает узел вместо URLTest. Доступность Claude, Gemini и других сервисов проверка не подтверждает.';
+		option = section.option(form.Flag, 'subscriptions_enabled', 'Автоматически обновлять добавленные подписки');
+		option.default = '1';
+		option.rmempty = false;
+		option.description = 'По расписанию программы обновляет серверы добавленных подписок. Существующие фильтры правил сохраняются.';
 		option = section.option(form.Flag, 'disable_ipv6', 'Выключить ip v6');
 		option.default = '0';
 		option.rmempty = false;
@@ -388,11 +435,39 @@ return view.extend({
 			fields.filter(function(field) { return field.indexOf(group[0]) === 0 || field === 'membership.' + group[0].slice(0, -1); }).forEach(addField);
 		});
 
+		var subscriptions = map.section(form.GridSection, 'subscription', 'Добавление подписок');
+		subscriptions.anonymous = true;
+		subscriptions.addremove = true;
+		subscriptions.addbtntitle = 'Добавить';
+		var provider = subscriptions.option(form.ListValue, 'provider', 'Провайдер');
+		provider.value('browsec', 'Browsec Premium');
+		provider.value('subix', 'Subix (VPN1)');
+		provider.default = 'browsec';
+		provider.rmempty = false;
+		var login = subscriptions.option(form.Value, 'login', 'Логин Browsec');
+		login.depends('provider', 'browsec');
+		login.modalonly = true;
+		login.rmempty = false;
+		var password = subscriptions.option(form.Value, 'password', 'Пароль Browsec');
+		password.depends('provider', 'browsec');
+		password.modalonly = true;
+		password.password = true;
+		password.rmempty = false;
+		password.description = 'Логин и пароль хранятся только на роутере в файле с доступом root. Для их безопасной передачи откройте LuCI по HTTPS.';
+		var subscriptionUrl = subscriptions.option(form.Value, 'url', 'Ссылка подписки Subix');
+		subscriptionUrl.depends('provider', 'subix');
+		subscriptionUrl.modalonly = true;
+		subscriptionUrl.password = true;
+		subscriptionUrl.rmempty = false;
+		subscriptionUrl.description = 'Ссылка хранится только на роутере. Серверы «ОБХОД» и LTE исключаются.';
+
 		var statusNode = E('p', {role: 'status', style: 'white-space: pre-line'}, statusText(status));
 		var healthNode = E('p', {id: 'podkop-updater-openai-status', role: 'status', style: 'white-space: pre-line'}, healthText(status));
+		var subscriptionsNode = E('p', {id: 'podkop-updater-subscriptions-status', role: 'status', style: 'white-space: pre-line'}, subscriptionsText(status));
 		var updateOperation = status.state === 'running' ? status.operation : null;
 		function refreshConfig(current) {
 			healthNode.textContent = healthText(current);
+			subscriptionsNode.textContent = subscriptionsText(current);
 			refreshEnabled(current);
 			if (updateOperation && current.operation !== updateOperation) {
 				statusNode.textContent = 'Ожидается результат запущенного обновления. Полученный статус относится к другой операции.';
@@ -492,11 +567,12 @@ return view.extend({
 		poll.add(function() { return readStatus().then(refreshConfig).catch(function() {
 			statusNode.textContent = 'Не удалось получить состояние обновления с роутера. Проверка состояния продолжится.';
 			healthNode.textContent = 'Контроль OpenAI: не удалось получить состояние с роутера.';
+			subscriptionsNode.textContent = 'Обновление подписок: не удалось получить состояние с роутера.';
 		}); }, 10);
 		return map.render().then(function(formNode) {
 			enabledNode = formNode.querySelector('#podkop-updater-enabled');
 			refreshEnabled(status);
-			return E('div', {}, [formNode, statusNode, healthNode, E('div', {class: 'cbi-page-actions'}, [testButton, ' ', button]),
+			return E('div', {}, [formNode, statusNode, healthNode, subscriptionsNode, E('div', {class: 'cbi-page-actions'}, [testButton, ' ', button]),
 				E('p', {class: 'cbi-section-descr'}, 'Обе кнопки используют сохранённые настройки. После изменения полей нажмите «Сохранить и применить». Тест соединения только скачивает и проверяет файл.'),
 				E('h3', {}, 'Обновление программ'), versionsNode, softwareNode,
 				E('div', {class: 'cbi-page-actions'}, [podkopButton, ' ', selfButton]),
