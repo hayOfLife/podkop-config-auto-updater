@@ -14,14 +14,31 @@ size="$(tr -d '\r' < "$directory/headers" | sed -n 's/^[Cc]ontent-[Rr]ange: byte
 case "$size" in ''|*[!0-9]*) exit 1 ;; esac
 [ "$size" -gt 0 ] && [ "$size" -le 1073741824 ]
 start=0
-: > "$directory/$name"
+index=0
+pids=''
+count=0
+wait_chunks() {
+	failed=0
+	for pid in $pids; do wait "$pid" || failed=1; done
+	[ "$failed" = 0 ] || return 1
+	pids=''
+	count=0
+}
 while [ "$start" -lt "$size" ]; do
-	end=$((start + 10485759))
+	end=$((start + 4194303))
 	[ "$end" -lt "$size" ] || end=$((size - 1))
-	curl -fsSL --connect-timeout 15 --max-time 120 --retry 2 --range "$start-$end" -o "$directory/chunk" "$base/$name"
-	[ "$(wc -c < "$directory/chunk")" -eq $((end - start + 1)) ]
-	cat "$directory/chunk" >> "$directory/$name"
+	chunk="$directory/chunk-$(printf '%05d' "$index")"
+	(
+		curl -fsSL --connect-timeout 15 --max-time 90 --retry 2 --range "$start-$end" -o "$chunk" "$base/$name"
+		[ "$(wc -c < "$chunk")" -eq $((end - start + 1)) ]
+		printf 'SDK %s: bytes %s-%s/%s\n' "$version" "$start" "$end" "$size"
+	) &
+	pids="$pids $!"
+	count=$((count + 1))
+	[ "$count" -lt 8 ] || wait_chunks
 	start=$((end + 1))
-	printf 'SDK %s: %s/%s bytes\n' "$version" "$start" "$size"
+	index=$((index + 1))
 done
+[ "$count" -eq 0 ] || wait_chunks
+cat "$directory"/chunk-* > "$directory/$name"
 (cd "$directory" && grep -F "*$name" sha256sums | sha256sum -c -)
