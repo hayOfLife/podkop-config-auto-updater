@@ -57,10 +57,15 @@ jobs:
           set -eu
           sudo chown -R 1000:1000 package .build/sdk-output
           docker build --build-arg CONTAINER --build-arg ARCH -t podkop-sdk .build/sdk-action
-          timeout 1800 docker run --rm \
+          sh .github/scripts/download-sdk.sh "${ARCH##*-}" .build/sdk-cache
+          docker run --rm --entrypoint cat podkop-sdk /builder/setup.sh > .build/sdk-setup.sh
+          sed -i 's@^wget -nv "\$FILE_HOST/\$DOWNLOAD_PATH/\$file_name"$@cp "/sdk-cache/$file_name" "$file_name"@' .build/sdk-setup.sh
+          grep -F 'cp "/sdk-cache/$file_name" "$file_name"' .build/sdk-setup.sh
+          timeout -k 10 1800 docker run --rm \
             --env FEEDNAME --env PACKAGES --env NO_SHFMT_CHECK --env V \
             --env UPSTREAM_URL=https://downloads.openwrt.org \
-            -v "$PWD/.build/sdk-output:/artifacts" -v "$PWD/package:/feed" podkop-sdk
+            -v "$PWD/.build/sdk-output:/artifacts" -v "$PWD/package:/feed" \
+            -v "$PWD/.build/sdk-setup.sh:/builder/setup.sh:ro" -v "$PWD/.build/sdk-cache:/sdk-cache:ro" podkop-sdk
           sudo chown -R "$(id -u):$(id -g)" package .build/sdk-output
       - name: Collect package
         run: |
