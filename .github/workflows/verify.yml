@@ -3,10 +3,28 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      diagnose:
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
+  diagnostic:
+    if: ${{ inputs.diagnose }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    strategy:
+      matrix:
+        version: ['24.10.7', '25.12.5']
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check first SDK chunks
+        env:
+          VERSION: ${{ matrix.version }}
+        run: timeout -k 5 90 sh .github/scripts/download-sdk.sh "$VERSION" /tmp/sdk-cache || true
   tests:
+    if: ${{ !inputs.diagnose }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
