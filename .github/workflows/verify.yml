@@ -6,27 +6,6 @@ on:
 permissions:
   contents: read
 jobs:
-  sdk-network:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        version: ['24.10.7', '25.12.5']
-    steps:
-      - name: Check SDK download
-        env:
-          VERSION: ${{ matrix.version }}
-        run: |
-          set -eu
-          path="releases/$VERSION/targets/bcm27xx/bcm2710"
-          curl -fsSL --connect-timeout 10 --max-time 40 "https://downloads.openwrt.org/$path/sha256sums" -o /tmp/sha256sums
-          archive="$(awk '/sdk-.*Linux-x86_64\.tar/ {print $2; exit}' /tmp/sha256sums | tr -d '*')"
-          test -n "$archive"
-          for host in downloads.openwrt.org mirror-03.infra.openwrt.org; do
-            printf '%s: ' "$host"
-            curl -fsSL --connect-timeout 10 --max-time 40 --range 0-1048575 -o /dev/null -w 'http=%{http_code} bytes=%{size_download} time=%{time_total}\n' "https://$host/$path/$archive" || true
-          done
   tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -59,18 +38,30 @@ jobs:
             series: '25.12'
     steps:
       - uses: actions/checkout@v7
+      - name: Check out OpenWrt SDK action
+        uses: actions/checkout@v7
+        with:
+          repository: openwrt/gh-action-sdk
+          ref: 7fc2640243284ecc44f4a9c3f749a61746ee02cb
+          path: .build/sdk-action
       - run: mkdir -p .build/sdk-output
       - name: Build native OpenWrt package
-        uses: openwrt/gh-action-sdk@7fc2640243284ecc44f4a9c3f749a61746ee02cb
         env:
           ARCH: ${{ matrix.arch }}
           CONTAINER: ghcr.io/openwrt/sdk
           FEEDNAME: sattelite
-          FEED_DIR: ${{ github.workspace }}/package
-          ARTIFACTS_DIR: ${{ github.workspace }}/.build/sdk-output
           PACKAGES: luci-app-podkop-config-auto-updater
           NO_SHFMT_CHECK: 1
           V: s
+        run: |
+          set -eu
+          sudo chown -R 1000:1000 package .build/sdk-output
+          docker build --build-arg CONTAINER --build-arg ARCH -t podkop-sdk .build/sdk-action
+          timeout 1800 docker run --rm \
+            --env FEEDNAME --env PACKAGES --env NO_SHFMT_CHECK --env V \
+            --env UPSTREAM_URL=https://downloads.openwrt.org \
+            -v "$PWD/.build/sdk-output:/artifacts" -v "$PWD/package:/feed" podkop-sdk
+          sudo chown -R "$(id -u):$(id -g)" package .build/sdk-output
       - name: Collect package
         run: |
           mkdir -p dist
