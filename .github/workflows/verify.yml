@@ -3,28 +3,10 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      diagnose:
-        type: boolean
-        default: false
 permissions:
   contents: read
 jobs:
-  diagnostic:
-    if: ${{ inputs.diagnose }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 4
-    strategy:
-      matrix:
-        version: ['24.10.7', '25.12.5']
-    steps:
-      - uses: actions/checkout@v7
-      - name: Check first SDK chunks
-        env:
-          VERSION: ${{ matrix.version }}
-        run: timeout -k 5 90 sh .github/scripts/download-sdk.sh "$VERSION" /tmp/sdk-cache || true
   tests:
-    if: ${{ !inputs.diagnose }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -63,19 +45,26 @@ jobs:
           ref: 7fc2640243284ecc44f4a9c3f749a61746ee02cb
           path: .build/sdk-action
       - run: mkdir -p .build/sdk-output
-      - name: Build native OpenWrt package
+      - name: Prepare SDK container
         env:
           ARCH: ${{ matrix.arch }}
           CONTAINER: ghcr.io/openwrt/sdk
+        run: |
+          set -eu
+          sudo chown -R 1000:1000 package .build/sdk-output
+          timeout -k 10 300 docker build --build-arg CONTAINER --build-arg ARCH -t podkop-sdk .build/sdk-action
+      - name: Download SDK in verified chunks
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: timeout -k 10 900 sh .github/scripts/download-sdk.sh "${ARCH##*-}" .build/sdk-cache
+      - name: Build native OpenWrt package
+        env:
           FEEDNAME: sattelite
           PACKAGES: luci-app-podkop-config-auto-updater
           NO_SHFMT_CHECK: 1
           V: s
         run: |
           set -eu
-          sudo chown -R 1000:1000 package .build/sdk-output
-          docker build --build-arg CONTAINER --build-arg ARCH -t podkop-sdk .build/sdk-action
-          sh .github/scripts/download-sdk.sh "${ARCH##*-}" .build/sdk-cache
           docker run --rm --entrypoint cat podkop-sdk /builder/setup.sh > .build/sdk-setup.sh
           sed -i 's@^wget -nv "\$FILE_HOST/\$DOWNLOAD_PATH/\$file_name"$@cp "/sdk-cache/$file_name" "$file_name"@' .build/sdk-setup.sh
           grep -F 'cp "/sdk-cache/$file_name" "$file_name"' .build/sdk-setup.sh
