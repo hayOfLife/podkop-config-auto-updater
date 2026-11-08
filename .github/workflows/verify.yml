@@ -3,10 +3,34 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      diagnose:
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
+  diagnostic:
+    if: ${{ inputs.diagnose }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['24.10.7', '25.12.5']
+    steps:
+      - name: Measure SDK download
+        env:
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -eu
+          path="releases/$VERSION/targets/bcm27xx/bcm2710"
+          curl -fsSL --connect-timeout 10 --max-time 40 "https://downloads.openwrt.org/$path/sha256sums" -o /tmp/sha256sums
+          archive="$(awk '/sdk-.*Linux-x86_64\.tar/ {print $2; exit}' /tmp/sha256sums | tr -d '*')"
+          test -n "$archive"
+          curl -fsSL --connect-timeout 10 --max-time 90 --range 0-10485759 -o /dev/null -w 'http=%{http_code} bytes=%{size_download} time=%{time_total}\n' "https://downloads.openwrt.org/$path/$archive"
   tests:
+    if: ${{ !inputs.diagnose }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
