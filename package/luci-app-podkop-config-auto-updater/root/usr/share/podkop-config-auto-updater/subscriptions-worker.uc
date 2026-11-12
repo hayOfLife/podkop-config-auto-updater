@@ -74,6 +74,11 @@ function getFeed(account, taskWork) {
 		url = account.url;
 		writePrivate(taskWork + '/headers', 'Accept: */*\nUser-Agent: podkop/0.8.12\n');
 	}
+	else if (account.provider == 'neovps') {
+		if (type(account.url) != 'string' || !match(account.url, /^https:\/\/neovps\.app\/s\/[A-Za-z0-9_-]+\/?$/)) die('neovps_invalid_url');
+		url = account.url;
+		writePrivate(taskWork + '/headers', 'Accept: */*\nUser-Agent: podkop/0.8.12\n');
+	}
 	else die('subscription_unknown_provider');
 	writePrivate(taskWork + '/subscription-curl', 'url = "' + url + '"\n');
 	if (system([helper, 'subscription-download', taskWork], 75000) != 0) {

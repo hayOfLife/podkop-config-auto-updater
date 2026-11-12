@@ -222,6 +222,10 @@ function subscriptionsText(status) {
 		browsec_auth_failed: 'Не удалось войти в Browsec или подтвердить Premium.',
 		browsec_credentials_missing: 'Укажите логин и пароль Browsec.',
 		subix_invalid_url: 'Проверьте полную ссылку Subix.',
+		neovps_invalid_url: 'Проверьте полную ссылку NeoVPS.',
+		neovps_invalid_response: 'Формат ответа NeoVPS не распознан.',
+		neovps_no_servers: 'В ответе NeoVPS нет поддерживаемых серверов; прежний список сохранён.',
+		neovps_incomplete_response: 'NeoVPS вернул неполный список серверов; прежний список сохранён.',
 		subscription_insecure_permissions: 'Ограничьте доступ к файлу настроек приложения.',
 		pending_changes: 'Сначала сохраните или отмените несохранённые изменения Podkop.',
 		download_dns_failed: 'Не удалось определить адрес сервера подписки.',
@@ -243,7 +247,7 @@ function subscriptionsText(status) {
 	if (result.error) text += '\n' + (details[result.error] || 'Проверьте настройки и доступ к провайдеру.');
 	Object.keys(result.accounts || {}).forEach(function(id) {
 		var account = result.accounts[id] || {};
-		var name = account.provider === 'browsec' ? 'Browsec Premium' : account.provider === 'subix' ? 'Subix (VPN1)' : 'Подписка';
+		var name = account.provider === 'browsec' ? 'Browsec Premium' : account.provider === 'subix' ? 'Subix (VPN1)' : account.provider === 'neovps' ? 'NeoVPS' : 'Подписка';
 		if (account.state === 'error') text += '\n' + name + ': ' + (details[account.error] || 'Проверьте настройки и доступ к провайдеру.');
 		else if (Number.isFinite(account.count)) text += '\n' + name + ': серверов ' + account.count + (account.skipped ? ', пропущено неподдерживаемых: ' + account.skipped : '') + '.';
 	});
@@ -442,6 +446,7 @@ return view.extend({
 		var provider = subscriptions.option(form.ListValue, 'provider', 'Провайдер');
 		provider.value('browsec', 'Browsec Premium');
 		provider.value('subix', 'Subix (VPN1)');
+		provider.value('neovps', 'NeoVPS');
 		provider.default = 'browsec';
 		provider.rmempty = false;
 		var login = subscriptions.option(form.Value, 'login', 'Логин Browsec');
@@ -454,12 +459,13 @@ return view.extend({
 		password.password = true;
 		password.rmempty = false;
 		password.description = 'Логин и пароль хранятся только на роутере в файле с доступом root. Для их безопасной передачи откройте LuCI по HTTPS.';
-		var subscriptionUrl = subscriptions.option(form.Value, 'url', 'Ссылка подписки Subix');
+		var subscriptionUrl = subscriptions.option(form.Value, 'url', 'Ссылка подписки');
 		subscriptionUrl.depends('provider', 'subix');
+		subscriptionUrl.depends('provider', 'neovps');
 		subscriptionUrl.modalonly = true;
 		subscriptionUrl.password = true;
 		subscriptionUrl.rmempty = false;
-		subscriptionUrl.description = 'Ссылка хранится только на роутере. Серверы «ОБХОД» и LTE исключаются.';
+		subscriptionUrl.description = 'Ссылка хранится только на роутере. Серверы «ОБХОД» и LTE исключаются. NeoVPS: неподдерживаемые параметры Xray пропускаются.';
 
 		var statusNode = E('p', {role: 'status', style: 'white-space: pre-line'}, statusText(status));
 		var healthNode = E('p', {id: 'podkop-updater-openai-status', role: 'status', style: 'white-space: pre-line'}, healthText(status));

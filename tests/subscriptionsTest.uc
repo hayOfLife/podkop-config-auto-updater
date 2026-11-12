@@ -1,6 +1,6 @@
 import { escapeURI } from 'providers';
 import { buildBrowsec } from 'browsec';
-import { buildSubix } from 'subix';
+import { buildSubix, buildNeoVps } from 'subix';
 import { subscriptionPatches } from 'subscriptions';
 
 let passed = 0;
@@ -43,6 +43,19 @@ check(length(converted.links) == 3 && converted.excluded == 1 && converted.skipp
 check(index(converted.links[0], 'security=reality') >= 0 && index(converted.links[0], 'sni=edge.example.com') >= 0, 'preserve reality parameters');
 rejects(() => buildSubix([{ remarks: 'ОБХОД', outbounds: [outbound(1)] }]), 'reject empty usable subscription');
 
+let neo = [
+	{ remarks: 'AUTO', outbounds: [outbound(1), outbound(2)] },
+	{ remarks: 'Германия', outbounds: [outbound(1)] },
+	{ remarks: 'Неизвестно', outbounds: [outbound(2)] },
+	{ remarks: 'ОБХОД LTE', outbounds: [outbound(3)] },
+	{ remarks: 'Masked', outbounds: [{ ...outbound(4), streamSettings: { ...outbound(4).streamSettings, finalmask: { tcp: [] } } }] }
+];
+let neoConverted = buildNeoVps(neo);
+check(length(neoConverted.links) == 2 && neoConverted.excluded == 1 && neoConverted.skipped == 1,
+	'NeoVPS skips aggregate profiles, limited names and unsupported finalmask');
+rejects(() => buildNeoVps([neo[0]]), 'reject aggregate-only NeoVPS feed');
+rejects(() => buildNeoVps([neo[4]]), 'reject NeoVPS feed without supported servers');
+
 let current = {
 	src4: { '.type': 'source', type: 'links', label: 'Browsec Premium · 1', link: [seed] },
 	src5: { '.type': 'source', type: 'links', label: 'Browsec Premium · 2', link: [seed] },
@@ -57,6 +70,13 @@ let fresh = subscriptionPatches({}, { '.name': 'cfg002', provider: 'subix' }, su
 check(fresh.count == 3 && fresh.native.types.pca_cfg002_s1 == 'source', 'create source for Subix');
 check(fresh.patches.pca_cfg002_n1.section == 'notUnderSanctions' && length(fresh.patches.pca_cfg002_n1.include) > 0, 'create positive country filter');
 check(index(fresh.patches.pca_cfg002_n1.exclude, 'AUTO') >= 0 && index(fresh.patches.pca_cfg002_m1.exclude, 'LTE') >= 0, 'exclude unknown and limited nodes');
+let neoFresh = subscriptionPatches({}, { '.name': 'cfg003', provider: 'neovps' }, neo, null, true);
+check(neoFresh.count == 2 && neoFresh.patches.pca_cfg003_s1.label == 'NeoVPS · cfg003', 'create NeoVPS source');
+check(index(neoFresh.patches.pca_cfg003_n1.include, 'Германия') >= 0 && index(neoFresh.patches.pca_cfg003_n1.exclude, 'AUTO') >= 0,
+	'NeoVPS country filter rejects unknown locations');
+let oldNeo = { pca_cfg003_s1: { '.type': 'source', type: 'links', link: [seed, seed, seed, seed] } };
+rejects(() => subscriptionPatches(oldNeo, { '.name': 'cfg003', provider: 'neovps' }, neo, null, true),
+	'retain previous NeoVPS source after a suspiciously incomplete response');
 let existingSubix = { pca_cfg002_s1: { '.type': 'source', type: 'links', link: fresh.patches.pca_cfg002_s1.link },
 	user_main: { '.type': 'member', source: 'pca_cfg002_s1', section: 'main', exclude: ['custom'] } };
 let preserved = subscriptionPatches(existingSubix, { '.name': 'cfg002', provider: 'subix' }, subix, null, true);

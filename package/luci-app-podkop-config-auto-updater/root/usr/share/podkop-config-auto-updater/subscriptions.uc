@@ -1,5 +1,5 @@
 import { buildBrowsec } from 'browsec';
-import { buildSubix } from 'subix';
+import { buildSubix, buildNeoVps } from 'subix';
 
 const allowed = ['Германия', 'Germany', '🇩🇪', 'Казахстан', 'Kazakhstan', '🇰🇿',
 	'Украина', 'Ukraine', '🇺🇦', 'Польша', 'Poland', '🇵🇱', 'Швеция', 'Sweden', '🇸🇪',
@@ -15,7 +15,7 @@ function same(a, b) { return sprintf('%J', a) == sprintf('%J', b); }
 export function subscriptionPatches(current, account, data, uuid, reuseExisting) {
 	let id = account['.name'];
 	if (type(id) != 'string' || !match(id, /^[A-Za-z_][A-Za-z0-9_]{0,39}$/)) die('subscription_invalid_id');
-	if (index(['browsec', 'subix'], account.provider) < 0) die('subscription_unknown_provider');
+	if (index(['browsec', 'subix', 'neovps'], account.provider) < 0) die('subscription_unknown_provider');
 	let prefix = 'pca_' + id, names = [prefix + '_s1', prefix + '_s2'];
 	if (account.provider == 'browsec' && !current[names[0]] && !current[names[1]] && reuseExisting) {
 		let found = [null, null];
@@ -31,7 +31,7 @@ export function subscriptionPatches(current, account, data, uuid, reuseExisting)
 			names = found;
 		}
 	}
-	if (account.provider == 'subix') names = [names[0]];
+	if (account.provider != 'browsec') names = [names[0]];
 	let old = [];
 	for (let name in names) {
 		let source = current[name];
@@ -45,8 +45,9 @@ export function subscriptionPatches(current, account, data, uuid, reuseExisting)
 		count = built.count;
 	}
 	else {
-		let built = buildSubix(data);
-		if (old[0] && (type(old[0]) != 'array' || length(built.links) * 10 < length(old[0]) * 7)) die('subix_incomplete_response');
+		let built = account.provider == 'neovps' ? buildNeoVps(data) : buildSubix(data);
+		if (old[0] && (type(old[0]) != 'array' || length(built.links) * 10 < length(old[0]) * 7))
+			die(account.provider == 'neovps' ? 'neovps_incomplete_response' : 'subix_incomplete_response');
 		values = [built.links];
 		count = length(built.links);
 		skipped = built.skipped;
@@ -56,7 +57,7 @@ export function subscriptionPatches(current, account, data, uuid, reuseExisting)
 	for (let i = 0; i < length(names); i++) {
 		let name = names[i], source = current[name];
 		if (!source) {
-			let label = (account.provider == 'browsec' ? 'Browsec Premium' : 'Subix') + ' · ' + id + (length(names) > 1 ? ' · ' + (i + 1) : '');
+			let label = (account.provider == 'browsec' ? 'Browsec Premium' : account.provider == 'neovps' ? 'NeoVPS' : 'Subix') + ' · ' + id + (length(names) > 1 ? ' · ' + (i + 1) : '');
 			patches[name] = { type: 'links', label, link: values[i] };
 		}
 		else if (!same(source.link, values[i])) patches[name] = { link: values[i] };

@@ -101,3 +101,22 @@ export function buildSubix(data) {
 	if (!length(links)) die('subix_no_servers');
 	return { links: sort(links), skipped, excluded: excludedCount };
 };
+
+export function buildNeoVps(data) {
+	if (type(data) != 'array' || !length(data) || length(data) > 1000) die('neovps_invalid_response');
+	let individual = [];
+	for (let config in data) {
+		if (type(config) != 'object' || type(config.outbounds) != 'array') die('neovps_invalid_response');
+		// Общий профиль содержит несколько выходов и не задаёт страну каждого сервера
+		if (length(filter(config.outbounds, outbound => outbound.protocol == 'vless')) != 1) continue;
+		push(individual, config);
+	}
+	if (!length(individual)) die('neovps_no_servers');
+	try { return buildSubix(individual); }
+	catch (error) {
+		let code = split(error.message || '', '\n')[0];
+		if (code == 'subix_no_servers') die('neovps_no_servers');
+		if (code == 'subix_invalid_response' || code == 'subix_invalid_value') die('neovps_invalid_response');
+		die('subscription_internal_error');
+	}
+};

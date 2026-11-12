@@ -46,7 +46,7 @@ async function fixture(exec, initial = {}, fields = ['main.future_option', 'sett
 
 {
 	const configured = await fixture(() => Promise.resolve({code: 0, stdout: '{}'}));
-	assert.deepEqual(configured.options.provider.choices.map(choice => choice[0]), ['browsec', 'subix']);
+	assert.deepEqual(configured.options.provider.choices.map(choice => choice[0]), ['browsec', 'subix', 'neovps']);
 	assert.equal(configured.options.subscriptions_enabled.default, '1');
 	assert.equal(configured.options.password.password, true);
 	assert.equal(configured.options.url.password, true);
@@ -60,6 +60,11 @@ async function fixture(exec, initial = {}, fields = ['main.future_option', 'sett
 	});
 	assert.match(flatten(failure.tree), /Не удалось войти в Browsec/);
 	assert.match(flatten(failure.tree), /прежние серверы сохранены/i);
+	const neoFailure = await fixture(() => Promise.resolve({code: 0, stdout: '{}'}), {}, [], {
+		subscriptions_enabled: true,
+		subscriptions: {state: 'error', accounts: {neo: {provider: 'neovps', state: 'error', error: 'neovps_no_servers'}}}
+	});
+	assert.match(flatten(neoFailure.tree), /NeoVPS:.*нет поддерживаемых серверов/);
 }
 
 for (const terminal of ['applied', 'unchanged', 'error']) {
